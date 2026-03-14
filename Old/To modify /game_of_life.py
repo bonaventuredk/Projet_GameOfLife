@@ -203,8 +203,8 @@ if __name__ == '__main__':
         
         t2 = time.time()
         
-        #if rank == 0:
-        #    appli.draw()
+        if rank == 0:
+            appli.draw()
         
         t3 = time.time()
         for event in pg.event.get():
