@@ -1,0 +1,16 @@
+RAPPORT DE TEST DE PERFORMANCE
+==============================
+Motif : glider
+Grille globale : 100 x 90
+Itérations : 10
+
+Version         Processus       Temps (s)       Correct   
+line            2               0.035           0         
+line            3               0.029           0         
+line            4               0.035           0         
+column          2               0.031           0         
+column          3               0.031           0         
+column          4               0.028           0         
+line_column     2               0.034           0         
+line_column     3               0.034           0         
+line_column     4               0.028           0         
