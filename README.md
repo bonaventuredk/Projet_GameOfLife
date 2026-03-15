@@ -27,7 +27,7 @@ Le script principal exécute les tests de performance pour différents nombres d
 
 - **Pattern** : `glider`  
 - **Résolution** : 200 × 200  
-- **Itérations** : 3  
+- **Itérations** : 10  
 - **Nombre de processus** : 2 à 12 (1 pour l'affichage + N-1 workers)  
 
 ### Exécution
