@@ -14,7 +14,7 @@ scripts = {
 # Paramètres
 pattern = "glider"
 resx, resy = 200, 200
-iterations = 3
+iterations = 10
 n_process_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # 1 processus affichage + N-1 workers
 
 results = {}
