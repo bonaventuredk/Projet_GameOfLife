@@ -1,80 +1,70 @@
 """
-Le jeu de la vie
-################
-...
+    Version combinant la parallélisation par lignes et colonnes 
 """
 import pygame as pg
 import numpy as np
 from mpi4py import MPI
-import time
-import sys
-import math
+from math import sqrt
 
-# ---------- Fonction utilitaire pour déterminer une grille 2D équilibrée ----------
-def get_2d_dims(nproc):
+def get_2d_grid_dims(n):
     """
-    Retourne un couple (n_rows, n_cols) tel que n_rows * n_cols == nproc,
-    avec une répartition aussi équilibrée que possible.
+    Retourne (p_rows, p_cols) tel que p_rows * p_cols = n et la grille
+    soit la plus carrée possible.
     """
-    if nproc == 1:
-        return (1, 1)
-    # Chercher la factorisation la plus équilibrée
-    root = int(math.sqrt(nproc))
-    for r in range(root, 0, -1):
-        if nproc % r == 0:
-            return (r, nproc // r)
-    # Si pas de diviseur parfait (ne devrait pas arriver car nproc est entier)
-    return (1, nproc)
+    best = (1, n)
+    best_diff = n - 1
+    for i in range(1, int(sqrt(n)) + 1):
+        if n % i == 0:
+            j = n // i
+            diff = abs(j - i)
+            if diff < best_diff:
+                best = (i, j)
+                best_diff = diff
+    return best
 
-# ---------- Classe Grille avec décomposition 2D ----------
-class Grille:
+class Grille2D:
     """
-    Grille torique décrivant l'automate cellulaire.
-    Version parallélisée 2D : chaque worker possède un bloc rectangulaire
-    avec des lignes et colonnes fantômes pour les échanges.
+    Grille torique découpée en blocs 2D.
+    Chaque worker reçoit un bloc de dimensions (ny_loc, nx_loc) et deux
+    lignes/colonnes fantômes (haut, bas, gauche, droite).
     """
-    def __init__(self, cart_comm, dim_global, init_pattern=None,
+    def __init__(self, worker_comm, row, col, p_rows, p_cols,
+                 global_dim, init_pattern=None,
                  color_life=pg.Color("black"), color_dead=pg.Color("white")):
-        self.cart_comm = cart_comm
-        self.rank = cart_comm.Get_rank()
-        self.nproc = cart_comm.Get_size()
-        self.dim_global = dim_global
-        ny_global, nx_global = dim_global
+        self.worker_comm = worker_comm
+        self.row = row          # ligne dans la grille de processus
+        self.col = col          # colonne dans la grille de processus
+        self.p_rows = p_rows
+        self.p_cols = p_cols
 
-        # Récupérer les coordonnées du processus dans la grille cartésienne
-        self.coords = cart_comm.Get_coords(self.rank)
-        self.row, self.col = self.coords
+        ny_glob, nx_glob = global_dim
 
-        # Dimensions de la grille de processus
-        dims = cart_comm.Get_topo()
-        self.n_rows, self.n_cols = dims[0]  # dims = (n_rows, n_cols, periods)
+        # Distribution des lignes entre les p_rows workers
+        base_y = ny_glob // p_rows
+        rest_y = ny_glob % p_rows
+        self.ny_loc = base_y + (1 if row < rest_y else 0)
+        self.y_start = row * base_y + min(row, rest_y)
 
-        # Distribution des lignes
-        base_y = ny_global // self.n_rows
-        rest_y = ny_global % self.n_rows
-        self.ny_loc = base_y + (1 if self.row < rest_y else 0)
-        self.y_start = self.row * base_y + min(self.row, rest_y)
+        # Distribution des colonnes entre les p_cols workers
+        base_x = nx_glob // p_cols
+        rest_x = nx_glob % p_cols
+        self.nx_loc = base_x + (1 if col < rest_x else 0)
+        self.x_start = col * base_x + min(col, rest_x)
 
-        # Distribution des colonnes
-        base_x = nx_global // self.n_cols
-        rest_x = nx_global % self.n_cols
-        self.nx_loc = base_x + (1 if self.col < rest_x else 0)
-        self.x_start = self.col * base_x + min(self.col, rest_x)
-
-        # Dimensions locales avec fantômes (halo)
+        # Dimensions locales avec fantômes (haut, bas, gauche, droite)
         self.dimensions = (self.ny_loc + 2, self.nx_loc + 2)
         self.cells = np.zeros(self.dimensions, dtype=np.uint8)
 
-        # Initialisation
+        # Initialisation à partir du pattern ou aléatoire
         if init_pattern is not None:
             for (i_glob, j_glob) in init_pattern:
                 if (self.y_start <= i_glob < self.y_start + self.ny_loc and
                     self.x_start <= j_glob < self.x_start + self.nx_loc):
-                    i_loc = i_glob - self.y_start + 1
-                    j_loc = j_glob - self.x_start + 1
+                    i_loc = i_glob - self.y_start + 1   # +1 pour fantôme haut
+                    j_loc = j_glob - self.x_start + 1   # +1 pour fantôme gauche
                     self.cells[i_loc, j_loc] = 1
         else:
-            # Initialisation aléatoire sur la partie réelle
+            # Remplir aléatoirement la partie réelle
             self.cells[1:self.ny_loc+1, 1:self.nx_loc+1] = np.random.randint(
                 2, size=(self.ny_loc, self.nx_loc), dtype=np.uint8
             )
@@ -82,19 +72,79 @@ class Grille:
         self.col_life = color_life
         self.col_dead = color_dead
 
-        # Déterminer les rangs des voisins (pour les échanges)
-        # Voisins haut / bas (direction 0)
-        self.top_rank = self.cart_comm.Shift(0, -1)[0]   # source pour déplacement -1
-        self.bottom_rank = self.cart_comm.Shift(0, 1)[0] # source pour déplacement +1
-        # Voisins gauche / droite (direction 1)
-        self.left_rank = self.cart_comm.Shift(1, -1)[0]
-        self.right_rank = self.cart_comm.Shift(1, 1)[0]
+        # Calcul des rangs des voisins dans worker_comm (ordre ligne majeure)
+        # Voisins verticaux (haut/bas)
+        top_row = (self.row - 1) % self.p_rows
+        bottom_row = (self.row + 1) % self.p_rows
+        self.top_rank = top_row * self.p_cols + self.col
+        self.bottom_rank = bottom_row * self.p_cols + self.col
+
+        # Voisins horizontaux (gauche/droite)
+        left_col = (self.col - 1) % self.p_cols
+        right_col = (self.col + 1) % self.p_cols
+        self.left_rank = self.row * self.p_cols + left_col
+        self.right_rank = self.row * self.p_cols + right_col
+
+    def exchange_ghost(self):
+        """Échange des lignes et colonnes fantômes avec les voisins."""
+        size = self.worker_comm.Get_size()
+        if size == 1:
+            # Un seul worker : recopie circulaire interne
+            # Lignes
+            self.cells[0, :] = self.cells[self.ny_loc, :]
+            self.cells[self.ny_loc+1, :] = self.cells[1, :]
+            # Colonnes
+            self.cells[:, 0] = self.cells[:, self.nx_loc]
+            self.cells[:, self.nx_loc+1] = self.cells[:, 1]
+            return
+
+        # Étape 1 : échanges horizontaux (gauche/droite)
+        # Envoyer colonne droite réelle au voisin de droite,
+        # recevoir dans la colonne fantôme gauche depuis le voisin de gauche
+        send_right = self.cells[:, self.nx_loc].copy()   # colonne réelle droite
+        recv_left = np.empty(self.dimensions[0], dtype=np.uint8)
+        self.worker_comm.Sendrecv(sendbuf=send_right, dest=self.right_rank,
+                                  recvbuf=recv_left, source=self.left_rank,
+                                  sendtag=0, recvtag=0)
+        self.cells[:, 0] = recv_left
+
+        # Envoyer colonne gauche réelle au voisin de gauche,
+        # recevoir dans la colonne fantôme droite depuis le voisin de droite
+        send_left = self.cells[:, 1].copy()             # colonne réelle gauche
+        recv_right = np.empty(self.dimensions[0], dtype=np.uint8)
+        self.worker_comm.Sendrecv(sendbuf=send_left, dest=self.left_rank,
+                                  recvbuf=recv_right, source=self.right_rank,
+                                  sendtag=1, recvtag=1)
+        self.cells[:, self.nx_loc+1] = recv_right
+
+        # Étape 2 : échanges verticaux (haut/bas) — les colonnes fantômes sont maintenant à jour
+        # Envoyer ligne basse réelle au voisin du bas,
+        # recevoir dans la ligne fantôme haute depuis le voisin du haut
+        send_bottom = self.cells[self.ny_loc, :].copy()  # ligne réelle basse
+        recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
+        self.worker_comm.Sendrecv(sendbuf=send_bottom, dest=self.bottom_rank,
+                                  recvbuf=recv_top, source=self.top_rank,
+                                  sendtag=2, recvtag=2)
+        self.cells[0, :] = recv_top
+
+        # Envoyer ligne haute réelle au voisin du haut,
+        # recevoir dans la ligne fantôme basse depuis le voisin du bas
+        send_top = self.cells[1, :].copy()               # ligne réelle haute
+        recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
+        self.worker_comm.Sendrecv(sendbuf=send_top, dest=self.top_rank,
+                                  recvbuf=recv_bottom, source=self.bottom_rank,
+                                  sendtag=3, recvtag=3)
+        self.cells[self.ny_loc+1, :] = recv_bottom
 
     def compute_next_iteration(self):
-        """Calcule l'état suivant en utilisant les fantômes déjà à jour."""
+        """Calcule l'état suivant pour toutes les cellules réelles."""
+        ny = self.ny_loc
+        nx = self.nx_loc
         next_cells = np.zeros_like(self.cells)
-        for i in range(1, self.ny_loc + 1):
-            for j in range(1, self.nx_loc + 1):
+        diff = []   # non utilisé, conservé pour compatibilité
+
+        for i in range(1, ny+1):
+            for j in range(1, nx+1):
                 # Les voisins sont accessibles directement grâce aux fantômes
                 voisines = [
                     self.cells[i-1, j-1], self.cells[i-1, j], self.cells[i-1, j+1],
@@ -111,53 +161,11 @@ class Grille:
                         next_cells[i, j] = 1
 
         self.cells = next_cells
-        # On ne maintient pas de liste diff (inutilisée)
-        return []
-    def exchange_ghosts(self):
-        # Cas particulier d'un seul worker
-        if self.nproc == 1:
-            self.cells[0, :] = self.cells[self.ny_loc, :]
-            self.cells[self.ny_loc+1, :] = self.cells[1, :]
-            self.cells[:, 0] = self.cells[:, self.nx_loc]
-            self.cells[:, self.nx_loc+1] = self.cells[:, 1]
-            return
+        return diff
 
-        reqs = []
 
-        # Échanges verticaux (haut/bas)
-        send_top = self.cells[1, :].copy()
-        recv_top = np.empty(self.nx_loc + 2, dtype=np.uint8)
-        reqs.append(self.cart_comm.Irecv(recv_top, source=self.top_rank, tag=0))
-        reqs.append(self.cart_comm.Isend(send_top, dest=self.top_rank, tag=0))
-
-        send_bottom = self.cells[self.ny_loc, :].copy()
-        recv_bottom = np.empty(self.nx_loc + 2, dtype=np.uint8)
-        reqs.append(self.cart_comm.Irecv(recv_bottom, source=self.bottom_rank, tag=0))
-        reqs.append(self.cart_comm.Isend(send_bottom, dest=self.bottom_rank, tag=0))
-
-        MPI.Request.Waitall(reqs)
-        self.cells[0, :] = recv_top
-        self.cells[self.ny_loc + 1, :] = recv_bottom
-
-        # Échanges horizontaux (gauche/droite) après mise à jour des fantômes verticaux
-        reqs = []
-        send_left = self.cells[:, 1].copy()
-        recv_left = np.empty(self.ny_loc + 2, dtype=np.uint8)
-        reqs.append(self.cart_comm.Irecv(recv_left, source=self.left_rank, tag=1))
-        reqs.append(self.cart_comm.Isend(send_left, dest=self.left_rank, tag=1))
-
-        send_right = self.cells[:, self.nx_loc].copy()
-        recv_right = np.empty(self.ny_loc + 2, dtype=np.uint8)
-        reqs.append(self.cart_comm.Irecv(recv_right, source=self.right_rank, tag=1))
-        reqs.append(self.cart_comm.Isend(send_right, dest=self.right_rank, tag=1))
-
-        MPI.Request.Waitall(reqs)
-        self.cells[:, 0] = recv_left
-        self.cells[:, self.nx_loc + 1] = recv_right
-    
-
-# ---------- Classe App (inchangée) ----------
 class App:
+    """Gestion de l'affichage Pygame (inchangée)."""
     def __init__(self, geometry, global_dim, color_life, color_dead):
         self.global_dim = global_dim
         self.color_life = color_life
@@ -190,6 +198,7 @@ class App:
                 pg.draw.line(self.screen, self.draw_color, (j*self.size_x, 0), (j*self.size_x, self.height))
         pg.display.update()
 
+
 # ---------- Initialisation MPI ----------
 globCom = MPI.COMM_WORLD.Dup()
 rank = globCom.Get_rank()
@@ -200,23 +209,17 @@ color = 0 if rank == 0 else 1
 key = rank
 new_comm = globCom.Split(color, key)
 if rank != 0:
-    worker_comm = new_comm
-    # Création d'un communicateur cartésien pour les workers
-    worker_nbp = worker_comm.Get_size()
-    dims_2d = get_2d_dims(worker_nbp)
-    periods = (True, True)  # tore dans les deux directions
-    reorder = True
-    worker_cart = worker_comm.Create_cart(dims_2d, periods, reorder)
+    worker_comm = new_comm      # communicateur pour les workers (rangs 0..nbp-2 localement)
 else:
     worker_comm = None
-    worker_cart = None
 
-# ---------- Programme principal ----------
+# -------------------------------------------------------------------
 if __name__ == '__main__':
-    pg.init()
+    import time
+    import sys
 
-    # Dictionnaire des patterns (identique)
-    dico_patterns = {
+    pg.init()
+    dico_patterns = {   # (identique à l'original)
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
         'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
         "acorn"   : ((100,100), [(51,52),(52,54),(53,51),(53,52),(53,55),(53,56),(53,57)]),
@@ -232,7 +235,6 @@ if __name__ == '__main__':
         "u" : ((200,200), [(101,101),(102,102),(103,102),(103,101),(104,103),(105,103),(105,102),(105,101),(105,105),(103,105),(102,105),(101,105),(101,104)]),
         "flat" : ((200,400), [(80,200),(81,200),(82,200),(83,200),(84,200),(85,200),(86,200),(87,200), (89,200),(90,200),(91,200),(92,200),(93,200),(97,200),(98,200),(99,200),(106,200),(107,200),(108,200),(109,200),(110,200),(111,200),(112,200),(114,200),(115,200),(116,200),(117,200),(118,200)])
     }
-
     choice = 'glider'
     if len(sys.argv) > 1:
         choice = sys.argv[1]
@@ -248,67 +250,95 @@ if __name__ == '__main__':
     except KeyError:
         print("No such pattern. Available ones are:", dico_patterns.keys())
         exit(1)
-    dim_global, pattern = init_pattern
-    ny_global, nx_global = dim_global
+    global_dim, pattern = init_pattern   # global_dim = (ny_glob, nx_glob)
 
-    # Création des grilles pour les workers (décomposition 2D)
+    # -----------------------------------------------------------------
+    # Détermination de la grille de processus 2D pour les workers
+    worker_nbp = nbp - 1
+    if worker_nbp < 1:
+        print("Erreur : il faut au moins 2 processus (1 pour l'affichage + 1 worker)")
+        exit(1)
+
+    p_rows, p_cols = get_2d_grid_dims(worker_nbp)
+    if rank == 0:
+        print(f"Grille de processus : {p_rows} lignes × {p_cols} colonnes = {worker_nbp} workers")
+
+    # Création de la grille locale pour chaque worker
     if rank != 0:
-        grid = Grille(worker_cart, dim_global, pattern,
-                      color_life=pg.Color("black"), color_dead=pg.Color("white"))
+        local_rank = rank - 1            # rang dans worker_comm (0 .. worker_nbp-1)
+        row = local_rank // p_cols
+        col = local_rank % p_cols
+        grid = Grille2D(worker_comm, row, col, p_rows, p_cols,
+                        global_dim, pattern,
+                        pg.Color("black"), pg.Color("white"))
     else:
         grid = None
 
+    # Création de l'application d'affichage (seulement sur le root)
     if rank == 0:
-        appli = App((resx, resy), dim_global, pg.Color("black"), pg.Color("white"))
+        appli = App((resx, resy), global_dim, pg.Color("black"), pg.Color("white"))
     else:
         appli = None
 
+    # -----------------------------------------------------------------
     mustContinue = True
-    # Premier échange de fantômes pour initialiser les halos
+    # Premier échange pour initialiser les fantômes
     if rank != 0:
-        grid.exchange_ghosts()
+        grid.exchange_ghost()
 
     while mustContinue:
         if rank != 0:
-            # Mesure du temps de calcul
+            # Calcul de la prochaine itération
             t1 = time.time()
-            grid.exchange_ghosts()
+            grid.exchange_ghost()                # met à jour les fantômes
             grid.compute_next_iteration()
             t2 = time.time()
             print(f"Worker {rank} compute time: {t2-t1:.2e} secondes")
 
-            # Préparation des données locales (sans les fantômes)
-            local_data = grid.cells[1:grid.ny_loc+1, 1:grid.nx_loc+1].flatten()
-            # Métadonnées : y_start, ny_loc, x_start, nx_loc
-            meta = np.array([grid.y_start, grid.ny_loc, grid.x_start, grid.nx_loc], dtype=int)
+            # Préparation des données locales (sans fantômes) pour l'envoi
+            local_data = grid.cells[1:grid.dimensions[0]-1, 1:grid.dimensions[1]-1].flatten()
+            info = np.array([grid.ny_loc, grid.nx_loc, grid.y_start, grid.x_start], dtype=int)
         else:
             local_data = np.array([], dtype=np.uint8)
-            meta = np.zeros(4, dtype=int)  # placeholder
+            info = np.array([0, 0, 0, 0], dtype=int)
 
-        # Rassemblement des métadonnées
-        all_meta = None
+        # Rassemblement des informations de chaque worker
+        all_info = None
         if rank == 0:
-            all_meta = np.zeros((nbp, 4), dtype=int)
-        globCom.Gather(meta, all_meta, root=0)
+            all_info = np.zeros((nbp, 4), dtype=int)   # seule la partie workers (1..nbp-1) sera utilisée
+        globCom.Gather(info, all_info, root=0)
 
-        # Communication des blocs par point-à-point (car Gatherv ne convient pas pour des blocs 2D)
+        # Rassemblement des données
         if rank == 0:
-            # Reconstruction de la grille globale
-            global_cells = np.zeros((ny_global, nx_global), dtype=np.uint8)
-            # Réception des blocs de chaque worker
+            # Calcul des tailles et déplacements pour Gatherv
+            recvcounts = np.zeros(nbp, dtype=int)
             for i in range(1, nbp):
-                ys, nyl, xs, nxl = all_meta[i]
-                # Recevoir le bloc du worker i
-                block_data = np.empty(nyl * nxl, dtype=np.uint8)
-                globCom.Recv(block_data, source=i, tag=100)
-                # Remettre en forme 2D et copier dans la grille globale
-                bloc = block_data.reshape((nyl, nxl))
-                global_cells[ys:ys+nyl, xs:xs+nxl] = bloc
+                ny = all_info[i, 0]
+                nx = all_info[i, 1]
+                recvcounts[i] = ny * nx
+            displs = np.zeros(nbp, dtype=int)
+            for i in range(1, nbp):
+                displs[i] = displs[i-1] + recvcounts[i-1]
+            total = displs[-1] + recvcounts[-1]
+            global_data = np.zeros(total, dtype=np.uint8)
         else:
-            # Envoyer le bloc local au processus 0
-            globCom.Send(local_data, dest=0, tag=100)
+            recvcounts = None
+            displs = None
+            global_data = None
+
+        globCom.Gatherv(local_data, [global_data, recvcounts, displs, MPI.UINT8_T], root=0)
 
         if rank == 0:
+            # Reconstruction de la grille globale à partir des blocs reçus
+            global_cells = np.zeros(global_dim, dtype=np.uint8)
+            for i in range(1, nbp):
+                ny = all_info[i, 0]
+                nx = all_info[i, 1]
+                y_start = all_info[i, 2]
+                x_start = all_info[i, 3]
+                bloc = global_data[displs[i]:displs[i]+recvcounts[i]].reshape((ny, nx))
+                global_cells[y_start:y_start+ny, x_start:x_start+nx] = bloc
+
             # Affichage
             t3 = time.time()
             appli.draw_global(global_cells)

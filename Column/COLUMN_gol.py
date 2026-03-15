@@ -8,11 +8,6 @@ import numpy as np
 from mpi4py import MPI
 
 class Grille:
-    """
-    Grille torique décrivant l'automate cellulaire.
-    Version parallélisée par colonnes : chaque worker possède un bloc contigu de colonnes,
-    avec deux colonnes fantômes (gauche et droite) pour les échanges.
-    """
     def __init__(self, rank, worker_nbp, dim, init_pattern=None,
                  color_life=pg.Color("black"), color_dead=pg.Color("white")):
         self.rank = rank
@@ -96,20 +91,23 @@ class Grille:
         right = (rank + 1) % size
         ny = self.dimensions[0]
 
-        # Échange avec le voisin de gauche : envoi de notre colonne gauche (indice 1),
-        # réception de sa colonne droite dans notre fantôme gauche (indice 0)
-        send_left = self.cells[:, 1].copy()
+        # Échange 1 : envoi de la colonne droite au voisin de droite,
+        # réception depuis le voisin de gauche dans le fantôme gauche.
+        send_right = self.cells[:, self.nx_loc].copy()   # colonne réelle droite
         recv_left = np.empty(ny, dtype=np.uint8)
-        comm.Sendrecv(sendbuf=send_left, dest=left, recvbuf=recv_left, source=left, tag=0)
+        comm.Sendrecv(sendbuf=send_right, dest=right,
+                    recvbuf=recv_left, source=left,
+                    sendtag=0, recvtag=0)
         self.cells[:, 0] = recv_left
 
-        # Échange avec le voisin de droite : envoi de notre colonne droite (indice nx_loc),
-        # réception de sa colonne gauche dans notre fantôme droit (indice nx_loc+1)
-        send_right = self.cells[:, self.nx_loc].copy()
+        # Échange 2 : envoi de la colonne gauche au voisin de gauche,
+        # réception depuis le voisin de droite dans le fantôme droit.
+        send_left = self.cells[:, 1].copy()              # colonne réelle gauche
         recv_right = np.empty(ny, dtype=np.uint8)
-        comm.Sendrecv(sendbuf=send_right, dest=right, recvbuf=recv_right, source=right, tag=1)
+        comm.Sendrecv(sendbuf=send_left, dest=left,
+                    recvbuf=recv_right, source=right,
+                    sendtag=1, recvtag=1)
         self.cells[:, self.nx_loc+1] = recv_right
-
 
 class App:
     # (inchangée, identique à l'original)
