@@ -6,6 +6,7 @@ Le jeu de la vie
 import pygame as pg
 import numpy as np
 from mpi4py import MPI
+import time
 
 class Grille:
     def __init__(self, rank, worker_nbp, dim, init_pattern=None,
