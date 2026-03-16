@@ -40,7 +40,7 @@ Pour chaque script et chaque nombre de processus, le script :
 
 Les résultats sont affichés dans le terminal, sauvegardés dans `gol_performance.txt` et tracés dans `gol_performance.png`.
 
-### Exemple de tableau de performance
+### Tableau de performance
 
 | N proc | line     | column   | line_column |
 | ------ | -------- | -------- | ----------- |

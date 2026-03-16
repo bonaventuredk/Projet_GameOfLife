@@ -1,4 +1,10 @@
+# Version parallélisé suivant les lignes
 """
+    Membre du groupes:
+    ------------------
+        -Dohemeto Bonaventure 
+        -BURNS Thomas
+
 Le jeu de la vie
 ################
 Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
@@ -22,7 +28,14 @@ et inversement.
 On itère ensuite pour étudier la façon dont évolue la population des cellules sur la grille.
 """
 import pygame as pg
+
 import numpy as np
+
+import random
+
+import time
+
+import sys
 
 
 class Grille:
@@ -39,9 +52,10 @@ class Grille:
     """
     def __init__(self, rank, worker_nbp, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
         self.rank = rank
-        self.worker_nbp = worker_nbp   # maintenant c'est cohérent
+        self.worker_nbp = worker_nbp   
         # Distribution équitable des lignes
         ny_global, nx = dim
+        
         base = ny_global // worker_nbp
         rest = ny_global % worker_nbp
         self.ny_loc = base + (1 if rank < rest else 0)
@@ -104,12 +118,14 @@ class Grille:
 
     def exchange_ghost_lines(self, comm):
         size = comm.Get_size()
-        if size == 1:
-            # Un seul worker : recopie circulaire interne
-            self.cells[0, :] = self.cells[self.dimensions[0]-2, :]
-            self.cells[self.dimensions[0]-1, :] = self.cells[1, :]
-            return
-
+        
+        """
+            if size == 1:
+                # Un seul worker : recopie circulaire interne
+                self.cells[0, :] = self.cells[self.dimensions[0]-2, :]
+                self.cells[self.dimensions[0]-1, :] = self.cells[1, :]
+                return  
+        """
         rank = comm.Get_rank()
         top = (rank - 1) % size
         bottom = (rank + 1) % size
@@ -177,8 +193,7 @@ else:
     worker_comm = None
 
 if __name__ == '__main__':
-    import time
-    import sys
+    
 
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
