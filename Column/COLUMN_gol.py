@@ -216,30 +216,39 @@ if __name__ == '__main__':
     if rank != 0:
         grid.exchange_ghost_columns(worker_comm)
 
+# ========================== Boucle principale ==========================
     while mustContinue:
+        t_total_start = time.time()  # Début du chronomètre total de l'itération
+
+        # -------------------- Calcul --------------------
         if rank != 0:
-            t1 = time.time()
+            t_calc_start = time.time()
             grid.exchange_ghost_columns(worker_comm)
             grid.compute_next_iteration()
-            t2 = time.time()
-            print(f"Worker {rank} compute time: {t2-t1:.2e} secondes")
+            t_calc_end = time.time()
+            t_calc = t_calc_end - t_calc_start
 
-            # Préparation des données locales (sans les fantômes)
-            # On envoie toutes les lignes pour les colonnes réelles, aplati dans l'ordre des lignes
+            # Préparation des données locales (sans fantômes)
             local_data = grid.cells[:, 1:grid.dimensions[1]-1].flatten()
             local_ncols = grid.dimensions[1] - 2
         else:
+            t_calc = 0
             local_data = np.array([], dtype=np.uint8)
             local_ncols = 0
+        # Chaque worker a t_calc, rank 0 veut la somme
+        t_calc_scalar = np.array(t_calc, dtype=np.float64)
+        t_calc_total = np.array(0.0, dtype=np.float64)
 
-        # Rassemblement des tailles locales (nombre de colonnes par worker)
-        all_ncols = None
-        if rank == 0:
-            all_ncols = np.zeros(nbp, dtype=int)
+        # Reduce avec SUM vers rank 0, en excluant rank 0 si t_calc=0
+        globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.SUM, root=0)
+
+
+        # -------------------- Rassemblement --------------------
+        all_ncols = np.zeros(nbp, dtype=int) if rank==0 else None
         globCom.Gather(np.array([local_ncols], dtype=int), all_ncols, root=0)
 
-        if rank == 0:
-            ny = dim[0]   # nombre de lignes global
+        ny = dim[0]
+        if rank==0:
             recvcounts = all_ncols * ny
             displs = np.zeros(nbp, dtype=int)
             for i in range(1, nbp):
@@ -251,11 +260,10 @@ if __name__ == '__main__':
             displs = None
             global_cells_flat = None
 
-        # Rassemblement des données
         globCom.Gatherv(local_data, [global_cells_flat, recvcounts, displs, MPI.UINT8_T], root=0)
 
+        # -------------------- Affichage --------------------
         if rank == 0:
-            # Reconstruction de la grille globale par concaténation horizontale
             global_cells = np.zeros(dim, dtype=np.uint8)
             for i in range(1, nbp):
                 start_col = displs[i] // ny
@@ -263,18 +271,24 @@ if __name__ == '__main__':
                 bloc = global_cells_flat[displs[i]:displs[i]+recvcounts[i]].reshape((ny, all_ncols[i]))
                 global_cells[:, start_col:end_col] = bloc
 
-            # Affichage
-            t3 = time.time()
+            t_display_start = time.time()
             appli.draw_global(global_cells)
-            t4 = time.time()
-            print(f"Affichage : {t4-t3:.2e} secondes")
+            t_display_end = time.time()
+            t_affichage = t_display_end - t_display_start
 
-            # Gestion des événements
+            # Événements
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
 
-        # Diffusion de mustContinue à tous les processus
-        mustContinue = globCom.bcast(mustContinue, root=0)
+            # Impression des temps
+            print(f"[Itération] Temps calcul (workers) : {t_calc_total:.10e}s | Temps affichage : {t_affichage:.6e}s")
 
-    pg.quit()
+        # -------------------- Temps total --------------------
+        t_total_end = time.time()
+        t_total = t_total_end - t_total_start
+        if rank == 0:
+            print(f"[Itération] Temps total : {t_total:.6e}s")
+
+        # Diffusion de mustContinue
+        mustContinue = globCom.bcast(mustContinue, root=0)

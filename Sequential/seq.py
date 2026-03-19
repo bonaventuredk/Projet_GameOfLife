@@ -24,7 +24,6 @@ On itère ensuite pour étudier la façon dont évolue la population des cellule
 import pygame  as pg
 import numpy   as np
 
-
 class Grille:
     """
     Grille torique décrivant l'automate cellulaire.
@@ -38,7 +37,7 @@ class Grille:
        grid = Grille( (10,10), init_pattern=[(2,2),(0,2),(4,2),(2,0),(2,4)], color_life=pg.Color("red"), color_dead=pg.Color("black"))
     """
     def __init__(self, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
-        #import random
+        import random
         self.dimensions = dim
         if init_pattern is not None:
             self.cells = np.zeros(self.dimensions, dtype=np.uint8)
@@ -55,8 +54,9 @@ class Grille:
         Calcule la prochaine génération de cellules en suivant les règles du jeu de la vie
         """
         # Remarque 1: on pourrait optimiser en faisant du vectoriel, mais pour plus de clarté, on utilise les boucles
-        # Remarque 2: on voit la grille plus comme une matrice qu'une grille géométrique. L'indice (0,0) est donc en haut
+        # Remarque 2: on voit la grille plus comme une matrice qu'une grille géométrique. L'indice (0,0) est donc en bas
         #             à gauche de la grille !
+        
         ny = self.dimensions[0]
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
@@ -83,17 +83,10 @@ class Grille:
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
+            
         return diff_cells
-    
-    def modificateur(self, diff):
-	    
-	    nx = self.dimensions[1]
-	    for c in diff:
-             nr = c//nx 
-             nc = c%nx 
-             self.cells[nr,nc] = (1 -self.cells[nr,nc] ) 
-	    return None
-    
+
+
 class App:
     """
     Cette classe décrit la fenêtre affichant la grille à l'écran
@@ -137,18 +130,11 @@ class App:
         pg.display.update()
 
 
-from mpi4py import MPI
-
-
-globCom = MPI.COMM_WORLD.Dup()
-rank = globCom.Get_rank()
-nbp  = globCom.Get_size()
-
-
 if __name__ == '__main__':
     import time
     import sys
-
+    # 0 cellule morte
+    # 1 cellule vivantes
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
@@ -176,36 +162,37 @@ if __name__ == '__main__':
         resy = int(sys.argv[3])
     print(f"Pattern initial choisi : {choice}")
     print(f"resolution ecran : {resx,resy}")
+
     try:
         init_pattern = dico_patterns[choice]
     except KeyError:
         print("No such pattern. Available ones are:", dico_patterns.keys())
         exit(1)
     grid = Grille(*init_pattern)
-    if rank == 0:
-        appli = App((resx, resy), grid)
+    appli = App((resx, resy), grid)
 
     mustContinue = True
     while mustContinue:
-        #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
-        diff = []  ####################
-        if rank == 1 :             #######################
-            t1 = time.time()                   #########################
-            diff = grid.compute_next_iteration()             ############################
-            globCom.send(diff, dest = 0, tag = 101)                  ##########################""
-            t2 = time.time()                #######
-            print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes\n", end='')
-        elif rank == 0 : 
-            t2 = time.time()
-            diff = globCom.recv(source = 1, tag = 101)
-            grid.modificateur(diff)
-            appli.draw()
-            t3 = time.time()
-            for event in pg.event.get():
-                if event.type == pg.QUIT:
-                    mustContinue = False
-                    globCom.Abort()
-            print(f"Temps affichage : {t3-t2:2.2e} secondes\r", end='')
-    
-    pg.quit()
+        # Optionnel : ajouter un délai pour ralentir l'animation
+        # time.sleep(0.5)
 
+        t1 = time.time()
+        
+        # Calcul de la prochaine génération
+        diff = grid.compute_next_iteration()   # Met à jour self.cells
+        
+        t2 = time.time()
+        
+        # Affichage
+        appli.draw()
+        
+        t3 = time.time()
+        
+        print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes, temps affichage : {t3-t2:2.2e} secondes\r", end='')
+
+        # Gestion des événements (fermeture de la fenêtre)
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                mustContinue = False
+
+    pg.quit()

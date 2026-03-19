@@ -86,7 +86,8 @@ class Grille2D:
         self.right_rank = self.row * self.p_cols + right_col
 
     def exchange_ghost(self):
-        """Échange des lignes et colonnes fantômes avec les voisins."""
+        """Échange complet avec les 8 voisins (4 directs + 4 coins)"""
+        
         size = self.worker_comm.Get_size()
         if size == 1:
             # Un seul worker : recopie circulaire interne
@@ -96,45 +97,115 @@ class Grille2D:
             # Colonnes
             self.cells[:, 0] = self.cells[:, self.nx_loc]
             self.cells[:, self.nx_loc+1] = self.cells[:, 1]
+            # Coins (copie circulaire)
+            self.cells[0, 0] = self.cells[self.ny_loc, self.nx_loc]
+            self.cells[0, self.nx_loc+1] = self.cells[self.ny_loc, 1]
+            self.cells[self.ny_loc+1, 0] = self.cells[1, self.nx_loc]
+            self.cells[self.ny_loc+1, self.nx_loc+1] = self.cells[1, 1]
             return
 
-        # Étape 1 : échanges horizontaux (gauche/droite)
-        # Envoyer colonne droite réelle au voisin de droite,
-        # recevoir dans la colonne fantôme gauche depuis le voisin de gauche
-        send_right = self.cells[:, self.nx_loc].copy()   # colonne réelle droite
+        # ===== 1. Échanges avec les 4 voisins directs =====
+        
+        # Échanges horizontaux (gauche/droite)
+        # Envoyer colonne droite réelle au voisin de droite, recevoir depuis la gauche
+        send_right = self.cells[:, self.nx_loc].copy()
         recv_left = np.empty(self.dimensions[0], dtype=np.uint8)
         self.worker_comm.Sendrecv(sendbuf=send_right, dest=self.right_rank,
-                                  recvbuf=recv_left, source=self.left_rank,
-                                  sendtag=0, recvtag=0)
+                                recvbuf=recv_left, source=self.left_rank,
+                                sendtag=0, recvtag=0)
         self.cells[:, 0] = recv_left
 
-        # Envoyer colonne gauche réelle au voisin de gauche,
-        # recevoir dans la colonne fantôme droite depuis le voisin de droite
-        send_left = self.cells[:, 1].copy()             # colonne réelle gauche
+        # Envoyer colonne gauche réelle au voisin de gauche, recevoir depuis la droite
+        send_left = self.cells[:, 1].copy()
         recv_right = np.empty(self.dimensions[0], dtype=np.uint8)
         self.worker_comm.Sendrecv(sendbuf=send_left, dest=self.left_rank,
-                                  recvbuf=recv_right, source=self.right_rank,
-                                  sendtag=1, recvtag=1)
+                                recvbuf=recv_right, source=self.right_rank,
+                                sendtag=1, recvtag=1)
         self.cells[:, self.nx_loc+1] = recv_right
 
-        # Étape 2 : échanges verticaux (haut/bas) — les colonnes fantômes sont maintenant à jour
-        # Envoyer ligne basse réelle au voisin du bas,
-        # recevoir dans la ligne fantôme haute depuis le voisin du haut
-        send_bottom = self.cells[self.ny_loc, :].copy()  # ligne réelle basse
+        # Échanges verticaux (haut/bas) - les colonnes fantômes sont maintenant à jour
+        # Envoyer ligne basse réelle au voisin du bas, recevoir depuis le haut
+        send_bottom = self.cells[self.ny_loc, :].copy()
         recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
         self.worker_comm.Sendrecv(sendbuf=send_bottom, dest=self.bottom_rank,
-                                  recvbuf=recv_top, source=self.top_rank,
-                                  sendtag=2, recvtag=2)
+                                recvbuf=recv_top, source=self.top_rank,
+                                sendtag=2, recvtag=2)
         self.cells[0, :] = recv_top
 
-        # Envoyer ligne haute réelle au voisin du haut,
-        # recevoir dans la ligne fantôme basse depuis le voisin du bas
-        send_top = self.cells[1, :].copy()               # ligne réelle haute
+        # Envoyer ligne haute réelle au voisin du haut, recevoir depuis le bas
+        send_top = self.cells[1, :].copy()
         recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
         self.worker_comm.Sendrecv(sendbuf=send_top, dest=self.top_rank,
-                                  recvbuf=recv_bottom, source=self.bottom_rank,
-                                  sendtag=3, recvtag=3)
+                                recvbuf=recv_bottom, source=self.bottom_rank,
+                                sendtag=3, recvtag=3)
         self.cells[self.ny_loc+1, :] = recv_bottom
+
+        # ===== 2. Échanges avec les 4 coins diagonaux =====
+        
+        # Calcul des rangs des voisins en diagonale
+        # Nord-Ouest
+        nw_row = (self.row - 1) % self.p_rows
+        nw_col = (self.col - 1) % self.p_cols
+        nw_rank = nw_row * self.p_cols + nw_col
+        
+        # Nord-Est
+        ne_row = (self.row - 1) % self.p_rows
+        ne_col = (self.col + 1) % self.p_cols
+        ne_rank = ne_row * self.p_cols + ne_col
+        
+        # Sud-Ouest
+        sw_row = (self.row + 1) % self.p_rows
+        sw_col = (self.col - 1) % self.p_cols
+        sw_rank = sw_row * self.p_cols + sw_col
+        
+        # Sud-Est
+        se_row = (self.row + 1) % self.p_rows
+        se_col = (self.col + 1) % self.p_cols
+        se_rank = se_row * self.p_cols + se_col
+        
+        # Échange du coin Nord-Ouest
+        # J'envoie mon coin Sud-Est réel au processus SE, je reçois du processus NW
+        send_data_se = np.array([self.cells[self.ny_loc, self.nx_loc]], dtype=np.uint8)
+        recv_data_nw = np.empty(1, dtype=np.uint8)
+        self.worker_comm.Sendrecv(
+            sendbuf=send_data_se, dest=se_rank,
+            recvbuf=recv_data_nw, source=nw_rank,
+            sendtag=4, recvtag=4
+        )
+        self.cells[0, 0] = recv_data_nw[0]
+        
+        # Échange du coin Nord-Est
+        # J'envoie mon coin Sud-Ouest réel au processus SW, je reçois du processus NE
+        send_data_sw = np.array([self.cells[self.ny_loc, 1]], dtype=np.uint8)
+        recv_data_ne = np.empty(1, dtype=np.uint8)
+        self.worker_comm.Sendrecv(
+            sendbuf=send_data_sw, dest=sw_rank,
+            recvbuf=recv_data_ne, source=ne_rank,
+            sendtag=5, recvtag=5
+        )
+        self.cells[0, self.nx_loc+1] = recv_data_ne[0]
+        
+        # Échange du coin Sud-Ouest
+        # J'envoie mon coin Nord-Est réel au processus NE, je reçois du processus SW
+        send_data_ne = np.array([self.cells[1, self.nx_loc]], dtype=np.uint8)
+        recv_data_sw = np.empty(1, dtype=np.uint8)
+        self.worker_comm.Sendrecv(
+            sendbuf=send_data_ne, dest=ne_rank,
+            recvbuf=recv_data_sw, source=sw_rank,
+            sendtag=6, recvtag=6
+        )
+        self.cells[self.ny_loc+1, 0] = recv_data_sw[0]
+        
+        # Échange du coin Sud-Est
+        # J'envoie mon coin Nord-Ouest réel au processus NW, je reçois du processus SE
+        send_data_nw = np.array([self.cells[1, 1]], dtype=np.uint8)
+        recv_data_se = np.empty(1, dtype=np.uint8)
+        self.worker_comm.Sendrecv(
+            sendbuf=send_data_nw, dest=nw_rank,
+            recvbuf=recv_data_se, source=se_rank,
+            sendtag=7, recvtag=7
+        )
+        self.cells[self.ny_loc+1, self.nx_loc+1] = recv_data_se[0]
 
     def compute_next_iteration(self):
         """Calcule l'état suivant pour toutes les cellules réelles."""
@@ -287,34 +358,42 @@ if __name__ == '__main__':
         grid.exchange_ghost()
 
     while mustContinue:
+        t_total_start = time.time()  # début du temps total de l’itération
+
+        # -------------------- Calcul (workers) --------------------
         if rank != 0:
-            # Calcul de la prochaine itération
-            t1 = time.time()
+            t_calc_start = time.time()
             grid.exchange_ghost()                # met à jour les fantômes
             grid.compute_next_iteration()
-            t2 = time.time()
-            print(f"Worker {rank} compute time: {t2-t1:.2e} secondes")
+            t_calc_end = time.time()
+            t_calc = t_calc_end - t_calc_start
 
             # Préparation des données locales (sans fantômes) pour l'envoi
             local_data = grid.cells[1:grid.dimensions[0]-1, 1:grid.dimensions[1]-1].flatten()
             info = np.array([grid.ny_loc, grid.nx_loc, grid.y_start, grid.x_start], dtype=int)
         else:
+            t_calc = 0
             local_data = np.array([], dtype=np.uint8)
             info = np.array([0, 0, 0, 0], dtype=int)
+        # Chaque worker a t_calc, rank 0 veut la somme
+        t_calc_scalar = np.array(t_calc, dtype=np.float64)
+        t_calc_total = np.array(0.0, dtype=np.float64)
 
-        # Rassemblement des informations de chaque worker
+        # Reduce avec SUM vers rank 0, en excluant rank 0 si t_calc=0
+        globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.SUM, root=0)
+
+        # -------------------- Rassemblement --------------------
         all_info = None
         if rank == 0:
-            all_info = np.zeros((nbp, 4), dtype=int)   # seule la partie workers (1..nbp-1) sera utilisée
+            all_info = np.zeros((nbp,4), dtype=int)
         globCom.Gather(info, all_info, root=0)
 
-        # Rassemblement des données
+        # Gatherv des données
         if rank == 0:
-            # Calcul des tailles et déplacements pour Gatherv
             recvcounts = np.zeros(nbp, dtype=int)
             for i in range(1, nbp):
-                ny = all_info[i, 0]
-                nx = all_info[i, 1]
+                ny = all_info[i,0]
+                nx = all_info[i,1]
                 recvcounts[i] = ny * nx
             displs = np.zeros(nbp, dtype=int)
             for i in range(1, nbp):
@@ -328,29 +407,37 @@ if __name__ == '__main__':
 
         globCom.Gatherv(local_data, [global_data, recvcounts, displs, MPI.UINT8_T], root=0)
 
+        # -------------------- Reconstruction & Affichage --------------------
         if rank == 0:
-            # Reconstruction de la grille globale à partir des blocs reçus
+            # reconstruction de la grille globale
             global_cells = np.zeros(global_dim, dtype=np.uint8)
             for i in range(1, nbp):
-                ny = all_info[i, 0]
-                nx = all_info[i, 1]
-                y_start = all_info[i, 2]
-                x_start = all_info[i, 3]
-                bloc = global_data[displs[i]:displs[i]+recvcounts[i]].reshape((ny, nx))
+                ny = all_info[i,0]
+                nx = all_info[i,1]
+                y_start = all_info[i,2]
+                x_start = all_info[i,3]
+                bloc = global_data[displs[i]:displs[i]+recvcounts[i]].reshape((ny,nx))
                 global_cells[y_start:y_start+ny, x_start:x_start+nx] = bloc
 
-            # Affichage
-            t3 = time.time()
+            # affichage
+            t_display_start = time.time()
             appli.draw_global(global_cells)
-            t4 = time.time()
-            print(f"Affichage : {t4-t3:.2e} secondes")
+            t_display_end = time.time()
+            t_affichage = t_display_end - t_display_start
 
-            # Gestion des événements
+            # gestion événements
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
 
-        # Diffusion de mustContinue à tous les processus
-        mustContinue = globCom.bcast(mustContinue, root=0)
+            # affichage des temps
+            print(f"[Itération] Temps calcul (workers) : {t_calc_total:.6e}s | Temps affichage : {t_affichage:.6e}s")
 
-    pg.quit()
+        # -------------------- Temps total --------------------
+        t_total_end = time.time()
+        t_total = t_total_end - t_total_start
+        if rank == 0:
+            print(f"[Itération] Temps total : {t_total:.6e}s")
+
+        # diffusion de mustContinue
+        mustContinue = globCom.bcast(mustContinue, root=0)
