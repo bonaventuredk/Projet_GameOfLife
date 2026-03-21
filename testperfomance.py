@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 # Scripts à tester
 scripts = {
     "seq": "./Sequential/seq.py",
-    "line": "./Line/LINE_gol.py",
+    "line": "./Line/Linel.py",
     "column": "./Column/COLUMN_gol.py",
     "line_column": "./LineAndColumn/LINE_COLUMN.py"
 }
