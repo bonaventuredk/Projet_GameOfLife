@@ -1,20 +1,23 @@
-# Version parallélisée suivant les lignes avec mesure des temps
+# Version parallélisée suivant les lignes
 """
     Membres du groupe:
     ------------------
         - Dohemeto Bonaventure 
-        - BURNS Thomas
+        - Burns Thomas
 
 Le jeu de la vie
 ################
-Automate cellulaire de Conway sur grille torique.
 """
-
 import pygame as pg
+
 import numpy as np
+
 import random
+
 import time
+
 import sys
+
 from mpi4py import MPI
 
 # ========================== Classes ==========================
@@ -22,18 +25,33 @@ from mpi4py import MPI
 class Grille:
     """Grille torique pour l'automate cellulaire."""
     def __init__(self, rank, worker_nbp, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
+        """
+        Initialise une grille torique pour l'automate cellulaire.
+        
+        Paramètres:
+            rank (int): Rang du processus MPI.
+            worker_nbp (int): Nombre total de processus travailleurs.
+            dim (tuple): Dimensions globales (ny_global, nx).
+            init_pattern (list, optionnel): Liste de tuples (i, j) pour initialiser les cellules vivantes.
+            color_life (pg.Color): Couleur des cellules vivantes.
+            color_dead (pg.Color): Couleur des cellules mortes.
+        """
+        # Stockage des paramètres MPI
         self.rank = rank
         self.worker_nbp = worker_nbp
         ny_global, nx = dim
         
+        # Calcul des dimensions locales pour la parallélisation par lignes
         base = ny_global // worker_nbp
         rest = ny_global % worker_nbp
         self.ny_loc = base + (1 if rank < rest else 0)
         self.y_start = rank * base + min(rank, rest)
-        self.dimensions = (self.ny_loc + 2, nx)
+        self.dimensions = (self.ny_loc + 2, nx) # 2: pour les 2 lignes fantômes
 
+        # Initialisation du tableau de cellules
         self.cells = np.zeros(self.dimensions, dtype=np.uint8)
 
+        # Initialisation des cellules selon le motif fourni ou aléatoirement
         if init_pattern is not None:
             for (i_glob, j_glob) in init_pattern:
                 if self.y_start <= i_glob < self.y_start + self.ny_loc:
@@ -42,17 +60,34 @@ class Grille:
         else:
             self.cells[1:self.ny_loc+1, :] = np.random.randint(2, size=(self.ny_loc, nx), dtype=np.uint8)
 
+        # Couleurs pour l'affichage
         self.col_life = color_life
         self.col_dead = color_dead
 
     def compute_next_iteration(self):
+        """
+        Calcule la prochaine itération du jeu de la vie.
+        
+        Applique les règles du jeu de la vie à chaque cellule de la grille locale
+        et retourne la liste des indices des cellules qui ont changé d'état.
+        
+        Retourne:
+            list: Liste des indices globaux des cellules qui ont changé d'état.
+        """
+        # Récupération des dimensions réelles (sans les lignes fantômes)
         ny_reel = self.dimensions[0] - 2
         nx = self.dimensions[1]
+        
+        # Création d'un nouveau tableau pour la prochaine génération
         next_cells = np.zeros_like(self.cells)
+        
+        # Liste pour stocker les indices des cellules qui changent d'état
         diff = []
 
+        # Parcours de toutes les cellules locales
         for i in range(1, ny_reel+1):
             for j in range(nx):
+                # Comptage des 8 voisins
                 voisines = [
                     self.cells[i-1, (j-1)%nx], self.cells[i-1, j], self.cells[i-1, (j+1)%nx],
                     self.cells[i,   (j-1)%nx],                     self.cells[i,   (j+1)%nx],
@@ -60,92 +95,216 @@ class Grille:
                 ]
                 nb_voisines = sum(voisines)
 
+                # Application des règles du jeu de la vie
                 if self.cells[i, j] == 1:
+                    # Cellule vivante : survit si 2 ou 3 voisins
                     next_cells[i, j] = 1 if nb_voisines in (2,3) else 0
                     if nb_voisines not in (2,3):
                         diff.append((i-1)*nx + j)
                 else:
+                    # Cellule morte : naît si exactement 3 voisins
                     if nb_voisines == 3:
                         next_cells[i, j] = 1
                         diff.append((i-1)*nx + j)
 
+        # Mise à jour de la grille avec la nouvelle génération
         self.cells = next_cells
         return diff
 
     def modificateur(self, diff):
+        """
+        Modifie l'état des cellules spécifiées dans la liste diff.
+        
+        Inverse l'état (vivant/mort) de chaque cellule dont l'indice est dans la liste.
+        
+        Paramètres:
+            diff (list): Liste des indices des cellules à modifier.
+        """
+        # Récupération de la largeur de la grille
         nx = self.dimensions[1]
+        
+        # Pour chaque indice dans la liste des changements
         for c in diff:
-            nr = c//nx
-            nc = c%nx
+            # Conversion de l'indice linéaire en coordonnées (ligne, colonne)
+            nr = c // nx
+            nc = c % nx
+
+            # Inversion de l'état de la cellule (0->1 ou 1->0)
             self.cells[nr, nc] = 1 - self.cells[nr, nc]
 
     def exchange_ghost_lines(self, comm):
+        """
+        Échange les lignes fantômes avec les processus voisins via MPI.
+        
+        Envoie la ligne supérieure locale au processus voisin du haut et reçoit
+        sa ligne inférieure, puis fait de même pour le bas. 
+
+        Paramètres:
+            comm: Communicateur MPI pour la communication entre processus.
+        """
+        # Récupération de la taille du communicateur et du rang du processus
         size = comm.Get_size()
         rank = comm.Get_rank()
+        
+        # Calcul des rangs des processus voisins (topologie torique)
         top = (rank - 1) % size
         bottom = (rank + 1) % size
 
+        # Échange de la ligne fantôme supérieure
+        # Envoi de la ligne avant-dernière (réelle) au voisin du haut
         send_top = self.cells[self.dimensions[0]-2, :]
         recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
         comm.Sendrecv(sendbuf=send_top, dest=top, recvbuf=recv_top, source=top)
+        # Placement de la ligne reçue dans la ligne fantôme 0
         self.cells[0, :] = recv_top
 
+        # Échange de la ligne fantôme inférieure
+        # Envoi de la première ligne réelle au voisin du bas
         send_bottom = self.cells[1, :]
         recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
         comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
+        # Placement de la ligne reçue dans la dernière ligne fantôme
         self.cells[self.dimensions[0]-1, :] = recv_bottom
 
 # ========================== Application graphique ==========================
 
 class App:
     def __init__(self, geometry, global_dim, color_life, color_dead):
+        """
+        Initialise l'application graphique pour afficher le jeu de la vie.
+        
+        Paramètres:
+            geometry (tuple): Dimensions de la fenêtre (hauteur, largeur) en pixels.
+            global_dim (tuple): Dimensions de la grille globale (ny_global, nx).
+            color_life (pg.Color): Couleur RGB pour afficher les cellules vivantes.
+            color_dead (pg.Color): Couleur RGB pour afficher les cellules mortes.
+        """
+        # Stockage des dimensions globales de la grille (nombre de lignes et colonnes)
         self.global_dim = global_dim
+        
+        # Stockage de la couleur des cellules vivantes
         self.color_life = color_life
+        
+        # Stockage de la couleur des cellules mortes
         self.color_dead = color_dead
+        
+        # Calcul de la largeur en pixels d'une cellule (résolution horizontale / nombre de colonnes)
         self.size_x = geometry[1] // global_dim[1]
+        
+        # Calcul de la hauteur en pixels d'une cellule (résolution verticale / nombre de lignes)
         self.size_y = geometry[0] // global_dim[0]
+        
+        # Couleur de la grille : gris clair si les cellules sont suffisamment grandes (>4px), sinon pas de grille
         self.draw_color = pg.Color('lightgrey') if self.size_x>4 and self.size_y>4 else None
+        
+        # Calcul de la largeur totale en pixels de la fenêtre
         self.width = global_dim[1] * self.size_x
+        
+        # Calcul de la hauteur totale en pixels de la fenêtre
         self.height = global_dim[0] * self.size_y
+        
+        # Création de la fenêtre Pygame avec les dimensions calculées
         self.screen = pg.display.set_mode((self.width, self.height))
 
     def compute_rectangle(self, i, j):
-        return (self.size_x * j, self.height - self.size_y * (i + 1), self.size_x, self.size_y)
+        """
+        Calcule les coordonnées et dimensions du rectangle pour afficher une cellule.
+        
+        Paramètres:
+            i (int): Indice de ligne dans la grille (0 = en haut).
+            j (int): Indice de colonne dans la grille (0 = à gauche).
+        
+        Retourne:
+            tuple: (x, y, width, height) pour dessiner le rectangle avec Pygame.
+        """
+        # Calcul de la position x : colonne j * taille horizontale d'une cellule
+        x = self.size_x * j
+        
+        # Calcul de la position y : inversion verticale (y=0 en bas pour affichage inverse)
+        y = self.height - self.size_y * (i + 1)
+        
+        # Largeur et hauteur du rectangle correspondent à la taille d'une cellule
+        width = self.size_x
+        height = self.size_y
+        
+        return (x, y, width, height)
 
     def compute_color(self, val):
+        """
+        Détermine la couleur à afficher selon l'état d'une cellule.
+        
+        Paramètres:
+            val (int): Valeur de la cellule (1 pour vivante, 0 pour morte).
+        
+        Retourne:
+            pg.Color: Couleur attribuée à l'état de la cellule.
+        """
+        # Retourne la couleur correspondant à l'état de la cellule
         return self.color_life if val else self.color_dead
 
     def draw_global(self, global_cells):
+        """
+        Affiche la grille globale avec les états des cellules sur l'écran.
+        
+        Paramètres:
+            global_cells (np.ndarray): Matrice 2D contenant l'état de chaque cellule (1=vivante, 0=morte).
+        """
+        # Parcours de toutes les cellules de la grille globale
         for i in range(self.global_dim[0]):
             for j in range(self.global_dim[1]):
+                # Remplissage du rectangle correspondant avec la couleur appropriée
                 self.screen.fill(self.compute_color(global_cells[i,j]), self.compute_rectangle(i,j))
+        
+        # Affichage de la grille (lignes de démarcation entre les cellules) si suffisamment grande
         if self.draw_color is not None:
+            # Dessinage des lignes horizontales de séparation
             for i in range(self.global_dim[0]):
                 pg.draw.line(self.screen, self.draw_color, (0,i*self.size_y), (self.width,i*self.size_y))
+            
+            # Dessinage des lignes verticales de séparation
             for j in range(self.global_dim[1]):
                 pg.draw.line(self.screen, self.draw_color, (j*self.size_x,0), (j*self.size_x,self.height))
+        
+        # Mise à jour de l'affichage Pygame
         pg.display.update()
 
 # ========================== MPI ==========================
 
+# Création d'une copie du communicateur global MPI pour éviter de modifier l'original
 globCom = MPI.COMM_WORLD.Dup()
+
+# Récupération du rang du processus courant (0 pour le maître, 1+ pour les workers)
 rank = globCom.Get_rank()
+
+# Récupération du nombre total de processus MPI disponibles
 nbp = globCom.Get_size()
 
+# Attribution d'une couleur : 0 pour le processus affichage (rank 0), 1 pour les workers
 color = 0 if rank==0 else 1
+
+# Utilisation du rang comme clé de tri au sein de chaque groupe de couleur
 key = rank
+
+# Division du communicateur global en deux groupes : affichage et calcul
+# Les processus de même couleur formeront un nouveau communicateur
 new_comm = globCom.Split(color, key)
+
+# Création d'un communicateur pour les workers uniquement (rang 0 n'en a pas besoin)
 worker_comm = new_comm if rank!=0 else None
 
 # ========================== Main ==========================
 
 if __name__ == '__main__':
+    # Initialisation de Pygame
     pg.init()
 
+    # Importations 
     import time
     import sys
 
     pg.init()
+
+    # Dictionnaire des motifs (patterns) disponibles pour initialiser la grille globale
     dico_patterns = { # ... (identique à l'original)
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
         'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
@@ -179,21 +338,24 @@ if __name__ == '__main__':
         exit(1)
     dim, pattern = init_pattern
 
+    # Création de la grille locale des workers uniquement (le rang 0 est le maître d'affichage)
     grid = None
     if rank != 0:
         worker_rank = rank - 1
         worker_nbp = nbp - 1
         grid = Grille(worker_rank, worker_nbp, dim, pattern)
 
+    # Création de l'application graphique pour le processus maître
     appli = App((resx,resy), dim, pg.Color("black"), pg.Color("white")) if rank==0 else None
 
+    # Drapeau de boucle principale (arrêt lorsque la fenêtre est fermée)
     mustContinue = True
-    if rank != 0:
-        grid.exchange_ghost_lines(worker_comm)
+
 
     # ========================== Boucle principale ==========================
     while mustContinue:
-        t_total_start = time.time()  # temps total de l'itération
+        # Mesure du temps total de l'itération (calcul + communication + affichage)
+        t_total_start = time.time()
 
         # -------------------- Calcul --------------------
         if rank != 0:
