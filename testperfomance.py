@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 
 # Scripts à tester
 scripts = {
-    "seq": "./Sequential/seq.py",
+    #"seq": "./Sequential/seq.py",
     "line": "./Line/Linel.py",
-    "column": "./Column/COLUMN_gol.py",
+    "column": "./Column/Column.py",
     "line_column": "./LineAndColumn/LINE_COLUMN.py"
 }
 
@@ -16,7 +16,7 @@ scripts = {
 pattern = "glider"
 resx, resy = 800, 800
 iterations = 10
-n_process_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+n_process_list = [2, 3, 4]
 
 # Stockage des résultats
 results_total = {}

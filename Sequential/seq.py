@@ -24,6 +24,7 @@ On itère ensuite pour étudier la façon dont évolue la population des cellule
 import pygame  as pg
 import numpy   as np
 
+
 class Grille:
     """
     Grille torique décrivant l'automate cellulaire.
@@ -54,9 +55,8 @@ class Grille:
         Calcule la prochaine génération de cellules en suivant les règles du jeu de la vie
         """
         # Remarque 1: on pourrait optimiser en faisant du vectoriel, mais pour plus de clarté, on utilise les boucles
-        # Remarque 2: on voit la grille plus comme une matrice qu'une grille géométrique. L'indice (0,0) est donc en bas
+        # Remarque 2: on voit la grille plus comme une matrice qu'une grille géométrique. L'indice (0,0) est donc en haut
         #             à gauche de la grille !
-        
         ny = self.dimensions[0]
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
@@ -83,7 +83,6 @@ class Grille:
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
-            
         return diff_cells
 
 
@@ -133,8 +132,7 @@ class App:
 if __name__ == '__main__':
     import time
     import sys
-    # 0 cellule morte
-    # 1 cellule vivantes
+
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
@@ -157,12 +155,16 @@ if __name__ == '__main__':
         choice = sys.argv[1]
     resx = 800
     resy = 800
+    max_iterations = None  # None signifie boucle infinie
     if len(sys.argv) > 3 :
         resx = int(sys.argv[2])
         resy = int(sys.argv[3])
+        if len(sys.argv) > 4:
+            max_iterations = int(sys.argv[4])
     print(f"Pattern initial choisi : {choice}")
     print(f"resolution ecran : {resx,resy}")
-
+    if max_iterations is not None:
+        print(f"Nombre maximum d'itérations : {max_iterations}")
     try:
         init_pattern = dico_patterns[choice]
     except KeyError:
@@ -172,27 +174,24 @@ if __name__ == '__main__':
     appli = App((resx, resy), grid)
 
     mustContinue = True
+    iteration_count = 0
     while mustContinue:
-        # Optionnel : ajouter un délai pour ralentir l'animation
-        # time.sleep(0.5)
-
+        #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
         t1 = time.time()
-        
-        # Calcul de la prochaine génération
-        diff = grid.compute_next_iteration()   # Met à jour self.cells
-        
+        diff = grid.compute_next_iteration()
         t2 = time.time()
-        
-        # Affichage
         appli.draw()
-        
         t3 = time.time()
-        
-        print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes, temps affichage : {t3-t2:2.2e} secondes\r", end='')
-
-        # Gestion des événements (fermeture de la fenêtre)
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 mustContinue = False
-
+        
+        iteration_count += 1
+        print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes, temps affichage : {t3-t2:2.2e} secondes\r", end='');
+        
+        # Arrêt automatique si nombre maximum d'itérations atteint
+        if max_iterations is not None and iteration_count >= max_iterations:
+            mustContinue = False
+            print(f"\nArrêt après {iteration_count} itérations.")
+    
     pg.quit()
