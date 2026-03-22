@@ -133,38 +133,62 @@ class Grille:
             self.cells[nr, nc] = 1 - self.cells[nr, nc]
 
     def exchange_ghost_lines(self, comm):
-        """
-        Échange les lignes fantômes avec les processus voisins via MPI.
+        """Échange les lignes fantômes verticales entre voisins MPI.
         
-        Envoie la ligne supérieure locale au processus voisin du haut et reçoit
-        sa ligne inférieure, puis fait de même pour le bas. 
+        L’objectif de cette méthode est de synchroniser les frontières avec les
+        voisins du dessus et du dessous pour permettre un calcul correct des
+        cellules bordures lors de l’itération du Jeu de la Vie.
 
         Paramètres:
-            comm: Communicateur MPI pour la communication entre processus.
+            comm (MPI.Comm): Communicateur MPI des workers (représentant uniquement
+                les processus de calcul, sans le rang d’affichage).
+
+        Comportement:
+            - si `size == 2`, on effectue deux `Sendrecv` séquentiels pour éviter
+              blocages entre seulement deux processus.
+            - sinon, on utilise `Isend` / `Irecv` + `Waitall` pour communication
+              non bloquante entre plusieurs processus.
         """
-        # Récupération de la taille du communicateur et du rang du processus
         size = comm.Get_size()
         rank = comm.Get_rank()
-        
-        # Calcul des rangs des processus voisins (topologie torique)
-        top = (rank - 1) % size
-        bottom = (rank + 1) % size
 
-        # Échange de la ligne fantôme supérieure
-        # Envoi de la ligne avant-dernière (réelle) au voisin du haut
-        send_top = self.cells[self.dimensions[0]-2, :]
-        recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
-        comm.Sendrecv(sendbuf=send_top, dest=top, recvbuf=recv_top, source=top)
-        # Placement de la ligne reçue dans la ligne fantôme 0
-        self.cells[0, :] = recv_top
+        # Si on a qu'un seul processus pour le calcul et l'affichage
+        if size == 1:
+            self.cells[0, :] = self.cells[-2, :]
+            self.cells[-1, :] = self.cells[1, :]
+            return
 
-        # Échange de la ligne fantôme inférieure
-        # Envoi de la première ligne réelle au voisin du bas
-        send_bottom = self.cells[1, :]
-        recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
-        comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
-        # Placement de la ligne reçue dans la dernière ligne fantôme
-        self.cells[self.dimensions[0]-1, :] = recv_bottom
+        # Calcul des indices des voisins circulaires (bords toroïdaux globalement)
+        top = (rank - 1) % size      # voisin du dessus
+        bottom = (rank + 1) % size   # voisin du dessous
+
+        if size == 2:
+            # On utilise Sendrecv pour éviter les deadlocks
+            send_top = self.cells[-2, :]
+            recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
+            comm.Sendrecv(sendbuf=send_top, dest=top, recvbuf=recv_top, source=top)
+            self.cells[0, :] = recv_top
+
+            send_bottom = self.cells[1, :]
+            recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
+            comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
+            self.cells[-1, :] = recv_bottom
+        else:
+            # Communication non bloquante pour plus de deux processus
+            send_top = comm.Isend(self.cells[1, :], dest=top)
+            recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
+            req_bottom = comm.Irecv(recv_bottom, source=bottom)
+
+            send_bottom = comm.Isend(self.cells[-2, :], dest=bottom)
+            recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
+            req_top = comm.Irecv(recv_top, source=top)
+
+            # On attend que toutes les opérations MPI soient terminées
+            MPI.Request.Waitall([send_top, req_bottom, send_bottom, req_top])
+
+            # Mise à jour des lignes fantômes locales
+            self.cells[0, :] = recv_top
+            self.cells[-1, :] = recv_bottom
 
 # ========================== Application graphique ==========================
 
@@ -338,14 +362,19 @@ if __name__ == '__main__':
         exit(1)
     dim, pattern = init_pattern
 
-    # Création de la grille locale des workers uniquement (le rang 0 est le maître d'affichage)
+    # Si un seul processus, il fait à la fois le calcul et l'affichage.
+    single_process = (nbp == 1)
+
     grid = None
-    if rank != 0:
+    if single_process:
+        # grille globale avec une seule partition
+        grid = Grille(0, 1, dim, pattern)
+    elif rank != 0:
         worker_rank = rank - 1
         worker_nbp = nbp - 1
         grid = Grille(worker_rank, worker_nbp, dim, pattern)
 
-    # Création de l'application graphique pour le processus maître
+    # Création de l'application graphique pour le processus maître (et monoprocesseur)
     appli = App((resx,resy), dim, pg.Color("black"), pg.Color("white")) if rank==0 else None
 
     # Drapeau de boucle principale (arrêt lorsque la fenêtre est fermée)
@@ -358,74 +387,98 @@ if __name__ == '__main__':
         t_total_start = time.time()
 
         # -------------------- Calcul --------------------
-        if rank != 0:
+        if single_process:
             t_calc_start = time.time()
-            grid.exchange_ghost_lines(worker_comm)
+            grid.exchange_ghost_lines(globCom)
             grid.compute_next_iteration()
             t_calc_end = time.time()
             t_calc = t_calc_end - t_calc_start
+            t_calc_total = t_calc
 
-            local_data = grid.cells[1:grid.dimensions[0]-1, :].flatten()
-            local_nrows = grid.dimensions[0]-2
+            # Pas de communication MPI pour un seul processus
+            local_data = None
+            local_nrows = grid.dimensions[0] - 2
         else:
-            t_calc = 0
-            local_data = np.array([], dtype=np.uint8)
-            local_nrows = 0
-        
-        # Chaque worker a t_calc, rank 0 veut la somme
-        t_calc_scalar = np.array(t_calc, dtype=np.float64)
-        t_calc_total = np.array(0.0, dtype=np.float64)
+            if rank != 0:
+                t_calc_start = time.time()
+                grid.exchange_ghost_lines(worker_comm)
+                grid.compute_next_iteration()
+                t_calc_end = time.time()
+                t_calc = t_calc_end - t_calc_start
 
-        # Reduce avec SUM vers rank 0, en excluant rank 0 si t_calc=0
-        globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.SUM, root=0)
+                local_data = grid.cells[1:grid.dimensions[0]-1, :].flatten()
+                local_nrows = grid.dimensions[0]-2
+            else:
+                t_calc = 0
+                local_data = np.array([], dtype=np.uint8)
+                local_nrows = 0
 
-        # -------------------- Rassemblement --------------------
-        all_nrows = np.zeros(nbp, dtype=int) if rank==0 else None
-        globCom.Gather(np.array([local_nrows],dtype=int), all_nrows, root=0)
+            # Chaque worker a t_calc, rank 0 veut le max
+            t_calc_scalar = np.array(t_calc, dtype=np.float64)
+            t_calc_total = np.array(0.0, dtype=np.float64)
+            globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.MAX, root=0)
 
-        nx = dim[1]
-        if rank==0:
-            recvcounts = all_nrows * nx
-            displs = np.zeros(nbp,dtype=int)
-            for i in range(1,nbp):
-                displs[i] = displs[i-1] + recvcounts[i-1]
-            total_cells = displs[-1] + recvcounts[-1]
-            global_cells_flat = np.zeros(total_cells, dtype=np.uint8)
-        else:
-            recvcounts = None
-            displs = None
-            global_cells_flat = None
+            # -------------------- Rassemblement --------------------
+            all_nrows = np.zeros(nbp, dtype=int) if rank==0 else None
+            globCom.Gather(np.array([local_nrows],dtype=int), all_nrows, root=0)
 
-        globCom.Gatherv(local_data, [global_cells_flat, recvcounts, displs, MPI.UINT8_T], root=0)
+            nx = dim[1]
+            if rank==0:
+                recvcounts = all_nrows * nx
+                displs = np.zeros(nbp,dtype=int)
+                for i in range(1,nbp):
+                    displs[i] = displs[i-1] + recvcounts[i-1]
+                total_cells = displs[-1] + recvcounts[-1]
+                global_cells_flat = np.zeros(total_cells, dtype=np.uint8)
+            else:
+                recvcounts = None
+                displs = None
+                global_cells_flat = None
+
+            globCom.Gatherv(local_data, [global_cells_flat, recvcounts, displs, MPI.UINT8_T], root=0)
 
         # -------------------- Affichage --------------------
-        if rank==0:
-            global_cells = np.zeros(dim, dtype=np.uint8)
-            for i in range(1, nbp):
-                start_row = displs[i] // nx
-                end_row = start_row + all_nrows[i]
-                global_cells[start_row:end_row,:] = global_cells_flat[displs[i]:displs[i]+recvcounts[i]].reshape((all_nrows[i], nx))
-
+        if single_process:
             t_display_start = time.time()
-            appli.draw_global(global_cells)
+            appli.draw_global(grid.cells[1:grid.dimensions[0]-1, :])
             t_display_end = time.time()
             t_affichage = t_display_end - t_display_start
 
-            # -------------------- Événements --------------------
+            # Gestion des événements dans le même processus
             for event in pg.event.get():
                 if event.type==pg.QUIT:
                     mustContinue=False
 
-            # Affichage des temps
-            print(f"[Itération] Temps calcul (workers) : {t_calc_total:.6e}s | Temps affichage : {t_affichage:.6e}s")
+            print(f"[Itération] Temps calcul : {t_calc_total:.6e}s | Temps affichage : {t_affichage:.6e}s")
+        else:
+            if rank==0:
+                nx = dim[1]
+                global_cells = np.zeros(dim, dtype=np.uint8)
+                for i in range(1, nbp):
+                    start_row = displs[i] // nx
+                    end_row = start_row + all_nrows[i]
+                    global_cells[start_row:end_row,:] = global_cells_flat[displs[i]:displs[i]+recvcounts[i]].reshape((all_nrows[i], nx))
+
+                t_display_start = time.time()
+                appli.draw_global(global_cells)
+                t_display_end = time.time()
+                t_affichage = t_display_end - t_display_start
+
+                # -------------------- Événements --------------------
+                for event in pg.event.get():
+                    if event.type==pg.QUIT:
+                        mustContinue=False
+
+                # Affichage des temps
+                print(f"[Itération] Temps calcul (workers) : {t_calc_total:.6e}s | Temps affichage : {t_affichage:.6e}s")
 
         # -------------------- Temps total --------------------
         t_total_end = time.time()
         t_total = t_total_end - t_total_start
-        if rank==0:
+        if rank==0 or single_process:
             print(f"[Itération] Temps total : {t_total:.6e}s")
 
-        # Diffusion de mustContinue à tous
+        # Diffusion de mustContinue à tous (inutile en monoprocesseur mais sans effet)
         mustContinue = globCom.bcast(mustContinue, root=0)
 
     pg.quit()
