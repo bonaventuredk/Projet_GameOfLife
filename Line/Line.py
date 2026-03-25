@@ -159,8 +159,8 @@ class Grille:
             return
 
         # Calcul des indices des voisins circulaires (bords toroïdaux globalement)
-        top = (rank - 1) % size      # voisin du dessus
-        bottom = (rank + 1) % size   # voisin du dessous
+        haut = (rank - 1) % size      # voisin du dessus
+        bas = (rank + 1) % size   # voisin du dessous
 
         if size == 2:
             # On utilise Sendrecv pour éviter les deadlocks
@@ -174,21 +174,31 @@ class Grille:
             comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
             self.cells[-1, :] = recv_bottom
         else:
-            # Communication non bloquante pour plus de deux processus
-            send_top = comm.Isend(self.cells[1, :], dest=top)
-            recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
-            req_bottom = comm.Irecv(recv_bottom, source=bottom)
+            
+            send_haut = self.cells[1, :].copy()
+            recv_bas = np.empty(self.dimensions[1], dtype=np.uint8)
 
-            send_bottom = comm.Isend(self.cells[-2, :], dest=bottom)
-            recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
-            req_top = comm.Irecv(recv_top, source=top)
+            comm.Sendrecv(
+                sendbuf=send_haut,
+                dest=haut,
+                recvbuf=recv_bas,
+                source=bas
+            )
 
-            # On attend que toutes les opérations MPI soient terminées
-            MPI.Request.Waitall([send_top, req_bottom, send_bottom, req_top])
+          
+            send_bas = self.cells[-2,:].copy()
+            recv_haut = np.empty(self.dimensions[1], dtype=np.uint8)
 
-            # Mise à jour des lignes fantômes locales
-            self.cells[0, :] = recv_top
-            self.cells[-1, :] = recv_bottom
+            comm.Sendrecv(
+                sendbuf=send_bas,
+                dest=bas,
+                recvbuf=recv_haut,
+                source=haut
+            )
+
+            # Mise à jour ghost cells
+            self.cells[0,:] = recv_haut
+            self.cells[-1,:] = recv_bas
 
 # ========================== Application graphique ==========================
 
