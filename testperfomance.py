@@ -15,8 +15,8 @@ scripts = {
 # Paramètres
 pattern = "glider"
 resx, resy = 800, 800
-iterations = 10
-n_process_list = [2, 3, 4]
+iterations = 20
+n_process_list = [2, 3, 4, 5, 6, 7, 8]
 
 # Stockage des résultats
 results_total = {}
@@ -51,8 +51,8 @@ for nproc in n_process_list:
             total_times.append(elapsed_total)
             
             # Exemple fictif : fractionnement en calcul / affichage
-            calc_times.append(elapsed_total * 0.7)      # 70% du temps pour le calcul
-            display_times.append(elapsed_total * 0.3)   # 30% du temps pour l'affichage
+            calc_times.append(elapsed_total )      # 70% du temps pour le calcul
+            display_times.append(elapsed_total )   # 30% du temps pour l'affichage
         
         # Moyennes
         results_total[nproc][name] = sum(total_times) / len(total_times)

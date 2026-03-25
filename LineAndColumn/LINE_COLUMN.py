@@ -380,7 +380,7 @@ if __name__ == '__main__':
         t_calc_total = np.array(0.0, dtype=np.float64)
 
         # Reduce avec SUM vers rank 0, en excluant rank 0 si t_calc=0
-        globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.SUM, root=0)
+        globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.MAX, root=0)
 
         # -------------------- Rassemblement --------------------
         all_info = None

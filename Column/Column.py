@@ -185,19 +185,29 @@ class Grille:
             comm.Sendrecv(sendbuf=send_right, dest=right, recvbuf=recv_right, source=right)
             self.cells[:, -1] = recv_right
         else:
-            # Communication non bloquante pour plus de deux processus
-            send_left = comm.Isend(self.cells[:, 1].copy(), dest=left)
+            # Envoi colonne interne gauche → voisin gauche
+            send_left = self.cells[:, 1].copy()
             recv_right = np.empty(self.dimensions[0], dtype=np.uint8)
-            req_right = comm.Irecv(recv_right, source=right)
 
-            send_right = comm.Isend(self.cells[:, -2].copy(), dest=right)
+            comm.Sendrecv(
+                sendbuf=send_left,
+                dest=left,
+                recvbuf=recv_right,
+                source=right
+            )
+
+            # Envoi colonne interne droite → voisin droit
+            send_right = self.cells[:, -2].copy()
             recv_left = np.empty(self.dimensions[0], dtype=np.uint8)
-            req_left = comm.Irecv(recv_left, source=left)
 
-            # Attendre que toutes les opérations MPI soient terminées
-            MPI.Request.Waitall([send_left, req_right, send_right, req_left])
+            comm.Sendrecv(
+                sendbuf=send_right,
+                dest=right,
+                recvbuf=recv_left,
+                source=left
+            )
 
-            # Mise à jour des colonnes fantômes locales
+            # Mise à jour ghost cells
             self.cells[:, 0] = recv_left
             self.cells[:, -1] = recv_right
 
