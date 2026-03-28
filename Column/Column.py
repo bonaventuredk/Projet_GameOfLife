@@ -1,4 +1,4 @@
-# Version parallélisée suivant les colonnes
+# Version parallélisée suivant les colonnes (avec Sendrecv)
 """
     Membres du groupe:
     ------------------
@@ -400,6 +400,10 @@ if __name__ == '__main__':
 
     # Drapeau de boucle principale (arrêt lorsque la fenêtre est fermée)
     mustContinue = True
+    if rank == 0:
+        filename = f"tempscols_{nbp}.txt"
+        f = open(filename, "w")
+        t0 = time.time()   # début global
 
 
     # ========================== Boucle principale ==========================
@@ -427,7 +431,7 @@ if __name__ == '__main__':
                 t_calc_end = time.time()
                 t_calc = t_calc_end - t_calc_start
 
-                local_data = grid.cells[:, 1:grid.dimensions[1]-1].flatten()
+                local_data = grid.cells[:, 1:grid.dimensions[1]-1].ravel()
                 local_ncols = grid.dimensions[1] - 2
             else:
                 t_calc = 0
@@ -496,10 +500,14 @@ if __name__ == '__main__':
         # -------------------- Temps total --------------------
         t_total_end = time.time()
         t_total = t_total_end - t_total_start
-        if rank==0 or single_process:
+        if rank == 0 or single_process:
             print(f"[Itération] Temps total : {t_total:.6e}s")
+            if time.time() - t0 <= 5:
+                f.write(f"{t_total}\n")
+                f.flush()
 
         # Diffusion de mustContinue à tous (inutile en monoprocesseur mais sans effet)
         mustContinue = globCom.bcast(mustContinue, root=0)
-
+    if rank == 0:
+        f.close()
     pg.quit()

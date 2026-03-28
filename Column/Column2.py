@@ -1,4 +1,4 @@
-# Version parallélisée suivant les lignes (avec Sendrecv)
+# Version parallélisée suivant les colonnes (sans Sendrecv)
 """
     Membres du groupe:
     ------------------
@@ -39,14 +39,16 @@ class Grille:
         # Stockage des paramètres MPI
         self.rank = rank
         self.worker_nbp = worker_nbp
-        ny_global, nx = dim
+        ny_global, nx_global = dim
+        self.ny_global = ny_global
+        self.nx_global = nx_global
         
-        # Calcul des dimensions locales pour la parallélisation par lignes
-        base = ny_global // worker_nbp
-        rest = ny_global % worker_nbp
-        self.ny_loc = base + (1 if rank < rest else 0)
-        self.y_start = rank * base + min(rank, rest)
-        self.dimensions = (self.ny_loc + 2, nx) # 2: pour les 2 lignes fantômes
+        # Calcul des dimensions locales pour la parallélisation par colonnes
+        base = nx_global // worker_nbp
+        rest = nx_global % worker_nbp
+        self.nx_loc = base + (1 if rank < rest else 0)
+        self.x_start = rank * base + min(rank, rest)
+        self.dimensions = (ny_global, self.nx_loc + 2) # 2: pour les 2 colonnes fantômes
 
         # Initialisation du tableau de cellules
         self.cells = np.zeros(self.dimensions, dtype=np.uint8)
@@ -54,11 +56,11 @@ class Grille:
         # Initialisation des cellules selon le motif fourni ou aléatoirement
         if init_pattern is not None:
             for (i_glob, j_glob) in init_pattern:
-                if self.y_start <= i_glob < self.y_start + self.ny_loc:
-                    i_loc = i_glob - self.y_start + 1
-                    self.cells[i_loc, j_glob] = 1
+                if self.x_start <= j_glob < self.x_start + self.nx_loc:
+                    j_loc = j_glob - self.x_start + 1
+                    self.cells[i_glob, j_loc] = 1
         else:
-            self.cells[1:self.ny_loc+1, :] = np.random.randint(2, size=(self.ny_loc, nx), dtype=np.uint8)
+            self.cells[:, 1:self.nx_loc+1] = np.random.randint(2, size=(ny_global, self.nx_loc), dtype=np.uint8)
 
         # Couleurs pour l'affichage
         self.col_life = color_life
@@ -74,9 +76,9 @@ class Grille:
         Retourne:
             list: Liste des indices globaux des cellules qui ont changé d'état.
         """
-        # Récupération des dimensions réelles (sans les lignes fantômes)
-        ny_reel = self.dimensions[0] - 2
-        nx = self.dimensions[1]
+        # Récupération des dimensions réelles (sans les colonnes fantômes)
+        ny = self.dimensions[0]
+        nx_reel = self.dimensions[1] - 2
         
         # Création d'un nouveau tableau pour la prochaine génération
         next_cells = np.zeros_like(self.cells)
@@ -85,13 +87,13 @@ class Grille:
         diff = []
 
         # Parcours de toutes les cellules locales
-        for i in range(1, ny_reel+1):
-            for j in range(nx):
+        for i in range(ny):
+            for j in range(1, nx_reel+1):
                 # Comptage des 8 voisins
                 voisines = [
-                    self.cells[i-1, (j-1)%nx], self.cells[i-1, j], self.cells[i-1, (j+1)%nx],
-                    self.cells[i,   (j-1)%nx],                     self.cells[i,   (j+1)%nx],
-                    self.cells[i+1, (j-1)%nx], self.cells[i+1, j], self.cells[i+1, (j+1)%nx]
+                    self.cells[(i-1)%ny, j-1], self.cells[(i-1)%ny, j], self.cells[(i-1)%ny, j+1],
+                    self.cells[i,       j-1],                           self.cells[i,       j+1],
+                    self.cells[(i+1)%ny, j-1], self.cells[(i+1)%ny, j], self.cells[(i+1)%ny, j+1]
                 ]
                 nb_voisines = sum(voisines)
 
@@ -100,12 +102,16 @@ class Grille:
                     # Cellule vivante : survit si 2 ou 3 voisins
                     next_cells[i, j] = 1 if nb_voisines in (2,3) else 0
                     if nb_voisines not in (2,3):
-                        diff.append((i-1)*nx + j)
+                        # Calcul de l'indice global
+                        j_glob = self.x_start + (j - 1)
+                        diff.append(i * self.nx_global + j_glob)
                 else:
                     # Cellule morte : naît si exactement 3 voisins
                     if nb_voisines == 3:
                         next_cells[i, j] = 1
-                        diff.append((i-1)*nx + j)
+                        # Calcul de l'indice global
+                        j_glob = self.x_start + (j - 1)
+                        diff.append(i * self.nx_global + j_glob)
 
         # Mise à jour de la grille avec la nouvelle génération
         self.cells = next_cells
@@ -120,87 +126,70 @@ class Grille:
         Paramètres:
             diff (list): Liste des indices des cellules à modifier.
         """
-        # Récupération de la largeur de la grille
-        nx = self.dimensions[1]
-        
         # Pour chaque indice dans la liste des changements
         for c in diff:
-            # Conversion de l'indice linéaire en coordonnées (ligne, colonne)
-            nr = c // nx
-            nc = c % nx
+            # Conversion de l'indice linéaire en coordonnées globales
+            i_glob = c // self.nx_global
+            j_glob = c % self.nx_global
 
-            # Inversion de l'état de la cellule (0->1 ou 1->0)
-            self.cells[nr, nc] = 1 - self.cells[nr, nc]
+            # Vérifier si cette cellule appartient à ce processus
+            if self.x_start <= j_glob < self.x_start + self.nx_loc:
+                j_loc = j_glob - self.x_start + 1
+                # Inversion de l'état de la cellule (0->1 ou 1->0)
+                self.cells[i_glob, j_loc] = 1 - self.cells[i_glob, j_loc]
 
-    def exchange_ghost_lines(self, comm):
-        """Échange les lignes fantômes verticales entre voisins MPI.
-        
-        L’objectif de cette méthode est de synchroniser les frontières avec les
-        voisins du dessus et du dessous pour permettre un calcul correct des
-        cellules bordures lors de l’itération du Jeu de la Vie.
+    def exchange_ghost_columns(self, comm):
+        """Échange les colonnes fantômes horizontales entre voisins MPI.
+
+        Chaque processus possède une sous-grille locale avec deux colonnes fantômes :
+        - colonne 0 (fantôme gauche)
+        - colonne -1 (fantôme droite)
+
+        L'objectif de cette méthode est de synchroniser les frontières avec les
+        voisins de gauche et de droite pour permettre un calcul correct des
+        cellules bordures lors de l'itération du Jeu de la Vie.
 
         Paramètres:
             comm (MPI.Comm): Communicateur MPI des workers (représentant uniquement
-                les processus de calcul, sans le rang d’affichage).
-
-        Comportement:
-            - si `size == 2`, on effectue deux `Sendrecv` séquentiels pour éviter
-              blocages entre seulement deux processus.
-            - sinon, on utilise `Isend` / `Irecv` + `Waitall` pour communication
-              non bloquante entre plusieurs processus.
+                les processus de calcul, sans le rang d'affichage).
         """
         size = comm.Get_size()
         rank = comm.Get_rank()
 
-        # Si on a qu'un seul processus pour le calcul et l'affichage
+        # Cas monoprocesseur : on met à jour les colonnes fantômes à partir de la
+        # frontière locale (tore dans une seule grille sans communication MPI)
         if size == 1:
-            self.cells[0, :] = self.cells[-2, :]
-            self.cells[-1, :] = self.cells[1, :]
+            self.cells[:, 0] = self.cells[:, -2]
+            self.cells[:, -1] = self.cells[:, 1]
             return
 
         # Calcul des indices des voisins circulaires (bords toroïdaux globalement)
-        haut = (rank - 1) % size      # voisin du dessus
-        bas = (rank + 1) % size   # voisin du dessous
+        left = (rank - 1) % size      # voisin de gauche
+        right = (rank + 1) % size     # voisin de droite
 
-        if size == 2:
-            top = haut
-            bottom = bas
-            # On utilise Sendrecv pour éviter les deadlocks
-            send_top = self.cells[-2, :]
-            recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
-            comm.Sendrecv(sendbuf=send_top, dest=top, recvbuf=recv_top, source=top)
-            self.cells[0, :] = recv_top
+        # Préparation des buffers
+        send_left = self.cells[:, 1].copy()      # colonne interne gauche
+        recv_right = np.empty(self.dimensions[0], dtype=np.uint8)
+        send_right = self.cells[:, -2].copy()    # colonne interne droite
+        recv_left = np.empty(self.dimensions[0], dtype=np.uint8)
 
-            send_bottom = self.cells[1, :]
-            recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
-            comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
-            self.cells[-1, :] = recv_bottom
-        else:
-            
-            send_haut = self.cells[1, :].copy()
-            recv_bas = np.empty(self.dimensions[1], dtype=np.uint8)
+        # Communications non bloquantes
+        reqs = []
+        # Recevoir depuis la gauche (pour la colonne fantôme gauche)
+        reqs.append(comm.Irecv(recv_left, source=left))
+        # Recevoir depuis la droite (pour la colonne fantôme droite)
+        reqs.append(comm.Irecv(recv_right, source=right))
+        # Envoyer à gauche (colonne interne gauche)
+        reqs.append(comm.Isend(send_left, dest=left))
+        # Envoyer à droite (colonne interne droite)
+        reqs.append(comm.Isend(send_right, dest=right))
 
-            comm.Sendrecv(
-                sendbuf=send_haut,
-                dest=haut,
-                recvbuf=recv_bas,
-                source=bas
-            )
+        # Attendre la fin de toutes les communications
+        MPI.Request.Waitall(reqs)
 
-          
-            send_bas = self.cells[-2,:].copy()
-            recv_haut = np.empty(self.dimensions[1], dtype=np.uint8)
-
-            comm.Sendrecv(
-                sendbuf=send_bas,
-                dest=bas,
-                recvbuf=recv_haut,
-                source=haut
-            )
-
-            # Mise à jour ghost cells
-            self.cells[0,:] = recv_haut
-            self.cells[-1,:] = recv_bas
+        # Mise à jour des colonnes fantômes
+        self.cells[:, 0] = recv_left
+        self.cells[:, -1] = recv_right
 
 # ========================== Application graphique ==========================
 
@@ -391,13 +380,12 @@ if __name__ == '__main__':
 
     # Drapeau de boucle principale (arrêt lorsque la fenêtre est fermée)
     mustContinue = True
-
-
-    # ========================== Boucle principale ==========================
     if rank == 0:
-        filename = f"tempsline_{nbp}.txt"
+        filename = f"tempscols2_{nbp}.txt"
         f = open(filename, "w")
         t0 = time.time()   # début global
+
+    # ========================== Boucle principale ==========================
     while mustContinue:
         # Mesure du temps total de l'itération (calcul + communication + affichage)
         t_total_start = time.time()
@@ -405,7 +393,7 @@ if __name__ == '__main__':
         # -------------------- Calcul --------------------
         if single_process:
             t_calc_start = time.time()
-            grid.exchange_ghost_lines(globCom)
+            grid.exchange_ghost_columns(globCom)
             grid.compute_next_iteration()
             t_calc_end = time.time()
             t_calc = t_calc_end - t_calc_start
@@ -413,21 +401,21 @@ if __name__ == '__main__':
 
             # Pas de communication MPI pour un seul processus
             local_data = None
-            local_nrows = grid.dimensions[0] - 2
+            local_ncols = grid.dimensions[1] - 2
         else:
             if rank != 0:
                 t_calc_start = time.time()
-                grid.exchange_ghost_lines(worker_comm)
+                grid.exchange_ghost_columns(worker_comm)
                 grid.compute_next_iteration()
                 t_calc_end = time.time()
                 t_calc = t_calc_end - t_calc_start
 
-                local_data = grid.cells[1:grid.dimensions[0]-1, :].ravel()
-                local_nrows = grid.dimensions[0]-2
+                local_data = grid.cells[:, 1:grid.dimensions[1]-1].ravel()
+                local_ncols = grid.dimensions[1] - 2
             else:
                 t_calc = 0
                 local_data = np.array([], dtype=np.uint8)
-                local_nrows = 0
+                local_ncols = 0
 
             # Chaque worker a t_calc, rank 0 veut le max
             t_calc_scalar = np.array(t_calc, dtype=np.float64)
@@ -435,12 +423,12 @@ if __name__ == '__main__':
             globCom.Reduce(t_calc_scalar, t_calc_total, op=MPI.MAX, root=0)
 
             # -------------------- Rassemblement --------------------
-            all_nrows = np.zeros(nbp, dtype=int) if rank==0 else None
-            globCom.Gather(np.array([local_nrows],dtype=int), all_nrows, root=0)
+            all_ncols = np.zeros(nbp, dtype=int) if rank==0 else None
+            globCom.Gather(np.array([local_ncols],dtype=int), all_ncols, root=0)
 
-            nx = dim[1]
+            ny = dim[0]
             if rank==0:
-                recvcounts = all_nrows * nx
+                recvcounts = all_ncols * ny
                 displs = np.zeros(nbp,dtype=int)
                 for i in range(1,nbp):
                     displs[i] = displs[i-1] + recvcounts[i-1]
@@ -456,7 +444,7 @@ if __name__ == '__main__':
         # -------------------- Affichage --------------------
         if single_process:
             t_display_start = time.time()
-            appli.draw_global(grid.cells[1:grid.dimensions[0]-1, :])
+            appli.draw_global(grid.cells[:, 1:grid.dimensions[1]-1])
             t_display_end = time.time()
             t_affichage = t_display_end - t_display_start
 
@@ -468,12 +456,12 @@ if __name__ == '__main__':
             print(f"[Itération] Temps calcul : {t_calc_total:.6e}s | Temps affichage : {t_affichage:.6e}s")
         else:
             if rank==0:
-                nx = dim[1]
+                ny = dim[0]
                 global_cells = np.zeros(dim, dtype=np.uint8)
                 for i in range(1, nbp):
-                    start_row = displs[i] // nx
-                    end_row = start_row + all_nrows[i]
-                    global_cells[start_row:end_row,:] = global_cells_flat[displs[i]:displs[i]+recvcounts[i]].reshape((all_nrows[i], nx))
+                    start_col = displs[i] // ny
+                    end_col = start_col + all_ncols[i]
+                    global_cells[:, start_col:end_col] = global_cells_flat[displs[i]:displs[i]+recvcounts[i]].reshape((ny, all_ncols[i]))
 
                 t_display_start = time.time()
                 appli.draw_global(global_cells)
@@ -501,5 +489,4 @@ if __name__ == '__main__':
         mustContinue = globCom.bcast(mustContinue, root=0)
     if rank == 0:
         f.close()
-
     pg.quit()

@@ -353,6 +353,10 @@ if __name__ == '__main__':
 
     # -----------------------------------------------------------------
     mustContinue = True
+    if rank == 0:
+        filename = f"temps2D_{nbp}.txt"   # nb de workers
+        f = open(filename, "w")
+        t0 = time.time()   # début global
     # Premier échange pour initialiser les fantômes
     if rank != 0:
         grid.exchange_ghost()
@@ -439,5 +443,12 @@ if __name__ == '__main__':
         if rank == 0:
             print(f"[Itération] Temps total : {t_total:.6e}s")
 
+            # écrire seulement pendant les 10 premières secondes
+            if time.time() - t0 <= 5:
+                f.write(f"{t_total}\n")
+                f.flush()
+
         # diffusion de mustContinue
         mustContinue = globCom.bcast(mustContinue, root=0)
+    if rank == 0:
+        f.close()
