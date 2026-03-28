@@ -1,4 +1,4 @@
-# Version parallélisée suivant les lignes (avec Sendrecv)
+# Version parallélisée suivant les lignes (sans Sendrecv)
 """
     Membres du groupe:
     ------------------
@@ -142,12 +142,6 @@ class Grille:
         Paramètres:
             comm (MPI.Comm): Communicateur MPI des workers (représentant uniquement
                 les processus de calcul, sans le rang d’affichage).
-
-        Comportement:
-            - si `size == 2`, on effectue deux `Sendrecv` séquentiels pour éviter
-              blocages entre seulement deux processus.
-            - sinon, on utilise `Isend` / `Irecv` + `Waitall` pour communication
-              non bloquante entre plusieurs processus.
         """
         size = comm.Get_size()
         rank = comm.Get_rank()
@@ -160,47 +154,31 @@ class Grille:
 
         # Calcul des indices des voisins circulaires (bords toroïdaux globalement)
         haut = (rank - 1) % size      # voisin du dessus
-        bas = (rank + 1) % size   # voisin du dessous
+        bas = (rank + 1) % size       # voisin du dessous
 
-        if size == 2:
-            top = haut
-            bottom = bas
-            # On utilise Sendrecv pour éviter les deadlocks
-            send_top = self.cells[-2, :]
-            recv_top = np.empty(self.dimensions[1], dtype=np.uint8)
-            comm.Sendrecv(sendbuf=send_top, dest=top, recvbuf=recv_top, source=top)
-            self.cells[0, :] = recv_top
+        # Préparation des buffers
+        send_haut = self.cells[1, :].copy()
+        recv_bas = np.empty(self.dimensions[1], dtype=np.uint8)
+        send_bas = self.cells[-2, :].copy()
+        recv_haut = np.empty(self.dimensions[1], dtype=np.uint8)
 
-            send_bottom = self.cells[1, :]
-            recv_bottom = np.empty(self.dimensions[1], dtype=np.uint8)
-            comm.Sendrecv(sendbuf=send_bottom, dest=bottom, recvbuf=recv_bottom, source=bottom)
-            self.cells[-1, :] = recv_bottom
-        else:
-            
-            send_haut = self.cells[1, :].copy()
-            recv_bas = np.empty(self.dimensions[1], dtype=np.uint8)
+        # Communications non bloquantes
+        reqs = []
+        # Recevoir depuis le haut (pour la ligne fantôme du haut)
+        reqs.append(comm.Irecv(recv_haut, source=haut))
+        # Recevoir depuis le bas (pour la ligne fantôme du bas)
+        reqs.append(comm.Irecv(recv_bas, source=bas))
+        # Envoyer au haut (ligne interne du haut)
+        reqs.append(comm.Isend(send_haut, dest=haut))
+        # Envoyer au bas (ligne interne du bas)
+        reqs.append(comm.Isend(send_bas, dest=bas))
 
-            comm.Sendrecv(
-                sendbuf=send_haut,
-                dest=haut,
-                recvbuf=recv_bas,
-                source=bas
-            )
+        # Attendre la fin de toutes les communications
+        MPI.Request.Waitall(reqs)
 
-          
-            send_bas = self.cells[-2,:].copy()
-            recv_haut = np.empty(self.dimensions[1], dtype=np.uint8)
-
-            comm.Sendrecv(
-                sendbuf=send_bas,
-                dest=bas,
-                recvbuf=recv_haut,
-                source=haut
-            )
-
-            # Mise à jour ghost cells
-            self.cells[0,:] = recv_haut
-            self.cells[-1,:] = recv_bas
+        # Mise à jour des lignes fantômes
+        self.cells[0, :] = recv_haut
+        self.cells[-1, :] = recv_bas
 
 # ========================== Application graphique ==========================
 
@@ -391,13 +369,12 @@ if __name__ == '__main__':
 
     # Drapeau de boucle principale (arrêt lorsque la fenêtre est fermée)
     mustContinue = True
-
-
-    # ========================== Boucle principale ==========================
     if rank == 0:
-        filename = f"tempsline_{nbp}.txt"
+        filename = f"tempsline2_{nbp}.txt"
         f = open(filename, "w")
         t0 = time.time()   # début global
+
+    # ========================== Boucle principale ==========================
     while mustContinue:
         # Mesure du temps total de l'itération (calcul + communication + affichage)
         t_total_start = time.time()
@@ -501,5 +478,4 @@ if __name__ == '__main__':
         mustContinue = globCom.bcast(mustContinue, root=0)
     if rank == 0:
         f.close()
-
     pg.quit()
