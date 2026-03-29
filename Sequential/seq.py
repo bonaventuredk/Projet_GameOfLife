@@ -172,9 +172,12 @@ if __name__ == '__main__':
         exit(1)
     grid = Grille(*init_pattern)
     appli = App((resx, resy), grid)
-
+    t0 = time.time()
+    filename = "tempsseq.txt"
+    f = open(filename, "w")
     mustContinue = True
     iteration_count = 0
+    
     while mustContinue:
         #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
         t1 = time.time()
@@ -187,11 +190,16 @@ if __name__ == '__main__':
                 mustContinue = False
         
         iteration_count += 1
+        t_calc = t2-t1
         print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes, temps affichage : {t3-t2:2.2e} secondes\r", end='');
         
         # Arrêt automatique si nombre maximum d'itérations atteint
         if max_iterations is not None and iteration_count >= max_iterations:
             mustContinue = False
             print(f"\nArrêt après {iteration_count} itérations.")
-    
+        if time.time() - t0 <= 5:
+            f.write(f"{t_calc:.10f}\n")
+            #f.flush()
+    f.close()
+        
     pg.quit()
