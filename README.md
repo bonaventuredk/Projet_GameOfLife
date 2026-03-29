@@ -13,11 +13,21 @@ Ce dépôt contient des scripts Python pour tester les performances de différen
 
 ## Contenu du projet
 
-- `Line/LINE_gol.py` – Implémentation ligne par ligne  
-- `Column/COLUMN_gol.py` – Implémentation colonne par colonne  
-- `LineAndColumn/LINE_COLUMN.py` – Implémentation mixte lignes et colonnes  
+- `Avec_Sendrecv/Line.py` – Implémentation ligne par ligne  ( avec SendRecv)
+- `Sans_Sendrecv/Line2.py` – Implémentation ligne par ligne  ( sans SendRecv) 
+- `Avec_Sendrecv/Column.py` – Implémentation colonne par colonne  ( avec SendRecv)  
+- `Sans_Sendrecv/Column2.py` – Implémentation colonne par colonne ( sans SendRecv)
+- `Avec_Sendrecv/LC.py` – Implémentation mixte ( avec SendRecv)
+- `Sans_Sendrecv/LC2.py` – Implémentation mixte ( sans SendRecv)
 - `gol_performance.txt` – Tableau des temps moyens des tests MPI  
-- `gol_performance.png` – Graphique des performances MPI  
+- `1_comparaison_temps_moyens.png` – Graphique sans la version sequentielle
+- `1_comparaison_temps_moyens_seq.png` – Graphique avec la version sequentielle
+- `2_comparaison_temps_moyens.png` – Graphique sans la version sequentielle
+- `2_comparaison_temps_moyens_seq.png` – Graphique avec la version sequentielle
+- `TESTs.py` - Pour lancer tous les tests de performances (avoir les temps moyens, les plots, le speed-up, l'efficiency)
+- - <span style="color:red;">`Important !`</span> - Pour lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante , afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. Voici la partie à modifier au besoin:
+    # Nombres de processus
+procs_list = [3,4,5,6,7,8]
 
 ## Description du script de benchmark
 
