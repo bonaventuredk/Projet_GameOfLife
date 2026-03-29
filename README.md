@@ -179,7 +179,7 @@ Les fichiers de temps sont nommés selon le motif :
 - **Comparaison des découpages** :
   - `cols2` et `2D2` sont légèrement meilleurs sur 8 processus.
   - `line2` et `cols` se comportent très bien sur 6‑7 processus.
-  - Aucune méthode ne domine absolument ; le choix dépend du nombre de workers.
+  - La version en grille n'est pas la plus rapide (avec Sendrecv et sans). Cela est due au nombre de communication qui devient plus important que les autres.
 
 ## Graphiques générés
 
