@@ -30,6 +30,34 @@ Le script principal exécute les tests de performance pour différents nombres d
 - **Itérations** : 10  
 - **Nombre de processus** : 2 à 12 (1 pour l'affichage + N-1 workers)  
 
+
+
+
+## 🖥️ Configuration matérielle sur lequel les test ont été réalisé (CPU)
+
+Voici les détails de la machine utilisée pour le projet :
+
+| Caractéristique | Détail |
+|-----------------|--------|
+| **Processeur** | AMD Ryzen 7 7730U with Radeon Graphics |
+| **Architecture** | x86_64 (64-bit) |
+| **Cœurs / Threads** | 8 cœurs / 16 threads |
+| **Fréquence CPU** | 410 MHz – 2000 MHz (boost activé) |
+| **Cache** | L1 : 256 KiB, L2 : 4 MiB, L3 : 16 MiB |
+| **Virtualisation** | AMD-V supportée |
+| **Endianness** | Little Endian |
+| **Nombre de CPU en ligne** | 16 |
+| **NUMA** | 1 nœud (CPU 0-15) |
+
+## 🔒 Sécurité et vulnérabilités
+
+## ⚡ Informations supplémentaires
+
+- Modes CPU : 32-bit et 64-bit  
+- Taille des adresses : 48 bits physiques / 48 bits virtuelles  
+- BogoMIPS : 3992.71  
+- Flags importants : SSE, SSE2, SSE4.1, SSE4.2, AVX, AVX2, FMA, AES, xsave, etc.
+
 ### Exécution
 
 Pour chaque script et chaque nombre de processus, le script :
