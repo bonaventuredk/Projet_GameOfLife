@@ -25,7 +25,7 @@ Ce dépôt contient des scripts Python pour tester les performances de différen
 - `2_comparaison_temps_moyens.png` – Graphique sans la version sequentielle
 - `2_comparaison_temps_moyens_seq.png` – Graphique avec la version sequentielle
 - `TESTs.py` - Pour lancer tous les tests de performances (avoir les temps moyens, les plots, le speed-up, l'efficiency)
--  <span style="color:red;">`IMPORTANT 🔴🔴🔴!`</span> - Pour lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante (procs_list = [3,4,5,6,7,8]), afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. Voici la partie à modifier au besoin:
+-  <span style="color:red;">`IMPORTANT 🔴🔴🔴!`</span> - Avant de lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante (procs_list = [3,4,5,6,7,8]), afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. 
  
 
 
@@ -37,8 +37,8 @@ Le script principal exécute les tests de performance pour différents nombres d
 
 - **Pattern** : `glider`  
 - **Résolution** : 200 × 200  
-- **Itérations** : 10  
-- **Nombre de processus** : 2 à 12 (1 pour l'affichage + N-1 workers)  
+- **Durée** : Chaque script est lancé pendant 5 secondes, on collecte les temps de calcul durant ce laps de temps et après on trouve la moyenne puis on finit par les plots. Le script TESTs.py le fait automatiquement. 🔴 Le temps de compilation dure envrion 5 secondes * 30 = 150 secondes (2min  30 secondes) en fonction du PC.   
+- **Nombre de processus** : 3 à 8 (1 pour l'affichage + N-1 workers)  
 
 
 
@@ -59,9 +59,9 @@ Voici les détails de la machine utilisée pour le projet :
 | **Nombre de CPU en ligne** | 16 |
 | **NUMA** | 1 nœud (CPU 0-15) |
 
-## 🔒 Sécurité et vulnérabilités
 
-## ⚡ Informations supplémentaires
+
+### ⚡ Informations supplémentaires
 
 - Modes CPU : 32-bit et 64-bit  
 - Taille des adresses : 48 bits physiques / 48 bits virtuelles  
@@ -70,13 +70,13 @@ Voici les détails de la machine utilisée pour le projet :
 
 ### Exécution
 
-Pour chaque script et chaque nombre de processus, le script :
+Si vous voulez tester individuellement les scripts. Dans les dossiers Avec_Sendrecv et Sans_Sendrecv: 
 
 1. Lance le script via MPI (`mpiexec -n N python script.py pattern resx resy`)  
 2. Mesure le temps d'exécution  
-3. Calcule le temps moyen sur 10 itérations  
+3. Temps moyen affiché à chaque ittération
 
-Les résultats sont affichés dans le terminal, sauvegardés dans `gol_performance.txt` et tracés dans `gol_performance.png`.
+Les résultats sont affichés dans le terminal, sauvegardés dans `tempsline_nbp.txt`, `tempsline2_nbp.txt`, `tempscols_nbp.txt`, `tempscols2_nbp.txt`, `temps2D_nbp.txt`, `temps2D2_nbp.txt` et tracés dans `_comparaison_temps_moyens.png` et `_comparaison_temps_moyens_seq.png`.
 
 ### Tableau de performance
 
