@@ -25,9 +25,9 @@ Ce dépôt contient des scripts Python pour tester les performances de différen
 - `2_comparaison_temps_moyens.png` – Graphique sans la version sequentielle
 - `2_comparaison_temps_moyens_seq.png` – Graphique avec la version sequentielle
 - `TESTs.py` - Pour lancer tous les tests de performances (avoir les temps moyens, les plots, le speed-up, l'efficiency)
-- - <span style="color:red;">`Important !`</span> - Pour lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante , afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. Voici la partie à modifier au besoin:
-    # Nombres de processus
-procs_list = [3,4,5,6,7,8]
+-  <span style="color:red;">`IMPORTANT 🔴🔴🔴!`</span> - Pour lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante (procs_list = [3,4,5,6,7,8]), afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. Voici la partie à modifier au besoin:
+ 
+
 
 ## Description du script de benchmark
 
