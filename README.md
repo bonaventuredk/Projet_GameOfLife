@@ -11,6 +11,13 @@ Un groupe de processus qui s'occupe de l'affichage et un autre pour les calculs.
 
 Ce dépôt contient des scripts Python pour tester les performances de différentes implémentations parallèles du **Game of Life** en utilisant `MPI` via `mpiexec`.
 
+Ce projet implémente trois variantes de parallélisation MPI du Jeu de la Vie :
+- **Découpage par lignes** (versions `line` et `line2`)
+- **Découpage par colonnes** (versions `cols` et `cols2`)
+- **Découpage 2D par blocs** (versions `2D` et `2D2`)
+
+Un script de tests (`TESTs.py`) permet de mesurer les performances et de calculer le **speedup** et l’**efficacité** pour chaque méthode.
+
 ## Contenu du projet
 
 - `Avec_Sendrecv/Line.py` – Implémentation ligne par ligne  ( avec SendRecv)
@@ -27,18 +34,7 @@ Ce dépôt contient des scripts Python pour tester les performances de différen
 - `TESTs.py` - Pour lancer tous les tests de performances (avoir les temps moyens, les plots, le speed-up, l'efficiency)
 -  <span style="color:red;">`IMPORTANT 🔴🔴🔴!`</span> - Avant de lancer le script TESTs.py, il faut aller dans les scripts sc1.py et sc3.py dans le dossier /Testsperformances et remplacer les valeurs de la liste suivante (procs_list = [3,4,5,6,7,8]), afin que le maximum des éléments ne dépasse pas le nombre de processus que votre PC peut lancer. Nous avons utilisé un max de 8 processus par défaut. 
  
-.
-├── Tests/
-│   ├── TESTs.py
-│   ├── tempsline_3.txt
-│   ├── tempsline2_4.txt
-│   ├── ...
-│   └── tempsseq.txt
-├── line.py
-├── cols.py
-├── 2D.py
-├── README.md
-└── speedup.png, efficiency.png, ...
+
 
 ## Description du script de benchmark
 
@@ -47,14 +43,14 @@ Le script principal exécute les tests de performance pour différents nombres d
 ### Paramètres testés
 
 - **Pattern** : `glider`  
-- **Résolution** : 200 × 200  
+- **Résolution** : resx = 800 ; resy = 800 pixels
 - **Durée** : Chaque script est lancé pendant 5 secondes, on collecte les temps de calcul durant ce laps de temps et après on trouve la moyenne puis on finit par les plots. Le script TESTs.py le fait automatiquement. 🔴 Le temps de compilation dure envrion 5 secondes * 30 = 150 secondes (2min  30 secondes) en fonction du PC.   
 - **Nombre de processus** : 3 à 8 (1 pour l'affichage + N-1 workers)  
 
 
 
 
-## 🖥️ Configuration matérielle sur lequel les test ont été réalisé (CPU)
+## 🖥️ Configuration matérielle (CPU)
 
 Voici les détails de la machine utilisée pour le projet :
 
@@ -90,8 +86,8 @@ Si vous voulez tester individuellement les scripts. Dans les dossiers Avec_Sendr
 Les résultats sont affichés dans le terminal, sauvegardés dans `tempsline_nbp.txt`, `tempsline2_nbp.txt`, `tempscols_nbp.txt`, `tempscols2_nbp.txt`, `temps2D_nbp.txt`, `temps2D2_nbp.txt` et tracés dans `_comparaison_temps_moyens.png` et `_comparaison_temps_moyens_seq.png`.
 
 ## PERFORMANCES
-Pour une  question de ressources, nous avons opté pour enregistrer les temps de calcul sur 5 secondes dans chaque script. Puis, nous faison la moyenne des données enrégistrées.
-Il faut noter qu'à chaque fois qu'on lance le script TESTs.py, on obtient des résultats légèrement différents à cause de l'alléatoire, mais globalement la tendance de ses résultats, reste la même: en terme de performance de chaque méthode.
+Pour une  question de ressources, nous avons opté pour enregistrer les temps de calcul sur 5 secondes dans chaque script. Puis, nous faisons la moyenne des données enrégistrées.
+Il faut noter qu'à chaque fois qu'on lance le script TESTs.py, on obtient des résultats très légèrement différents à cause de l'alléatoire, mais globalement la tendance de ses résultats reste la même: en terme de performance de chaque méthode.
 
 
 
@@ -103,16 +99,9 @@ Il faut noter qu'à chaque fois qu'on lance le script TESTs.py, on obtient des r
 ![1_comparaison_temps_moyens_seq](1_comparaison_temps_moyens_seq.png)
 ![2_comparaison_temps_moyens_seq](2_comparaison_temps_moyens_seq.png)
 
-### Bilan 
+# Bilan 
 
-# Simulation parallèle du Jeu de la Vie
 
-Ce projet implémente trois variantes de parallélisation MPI du Jeu de la Vie :
-- **Découpage par lignes** (versions `line` et `line2`)
-- **Découpage par colonnes** (versions `cols` et `cols2`)
-- **Découpage 2D par blocs** (versions `2D` et `2D2`)
-
-Un script de tests (`TESTs.py`) permet de mesurer les performances et de calculer le **speedup** et l’**efficacité** pour chaque méthode.
 
 ## Formules utilisées
 
@@ -137,7 +126,7 @@ E(p) = \frac{S(p)}{p} = \frac{T_{\text{seq}}}{p \cdot T_{\text{par}}(p)}
 
 - **Grille** : dimensions variables selon les motifs (ex. `glider` 100×90, `glider_gun` 400×400, etc.)
 - **Itérations** : chaque fichier de résultat contient les temps moyens sur plusieurs itérations
-- **Environnement** : cluster local MPI, 1 processus maître (affichage) + `p` workers
+- **Environnement** : 1 processus maître (affichage) + `p` workers
 - **Mesures** : temps de calcul + communication uniquement (l’affichage est désactivé pour les benchmarks)
 
 Les fichiers de temps sont nommés selon le motif :
