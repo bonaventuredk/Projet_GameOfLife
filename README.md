@@ -1,4 +1,6 @@
 # Projet_GameOfLife
+Ce projet représente un cas de JEU DE LA VIE où on a initialement une grille et des cellules mortes ou vivantes (selon leurs couleurs). Avec des règles données on observe des motifs évolutifs se déssiner et bouger... L'objectif ici est d'utiliser mpi4py pour distribuer au mieux les tâches aux processus afin d'avoir un gain de temps d'éxécution significatif. Etudier aussi la scalabilité, le speed-up et l'éfficacité.
+
 Un groupe de processus qui s'occupe de l'affichage et un autre pour les calculs.
 
 # Auteurs
