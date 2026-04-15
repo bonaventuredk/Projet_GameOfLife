@@ -8,6 +8,7 @@ Un groupe de processus qui s'occupe de l'affichage et un autre pour les calculs.
 - DOHEMETO Bonaventure
 - BURNS Thomas
 
+![Photo1](Screenshot_From_2026-04-15_20-07-19.png)
 
 # Game of Life MPI Performance Benchmark
 
